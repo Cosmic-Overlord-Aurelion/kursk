@@ -7,7 +7,8 @@ class User(models.Model):
     email = models.EmailField(unique=True)
     password_hash = models.TextField()  
     role = models.CharField(max_length=20, default='user')  
-    avatar_url = models.TextField(null=True, blank=True)
+
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
@@ -23,7 +24,7 @@ class Friendship(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_initiated')
     friend = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_received')
-    status = models.CharField(max_length=20, default='pending')  # pending/accepted
+    status = models.CharField(max_length=20, default='pending') 
     created_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True, blank=True)
 
