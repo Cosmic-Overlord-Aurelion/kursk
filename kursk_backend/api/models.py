@@ -1,14 +1,14 @@
-
 from django.db import models
 
 class User(models.Model):
     id = models.AutoField(primary_key=True)
     username = models.CharField(max_length=100, unique=True)
     email = models.EmailField(unique=True)
-    password_hash = models.TextField()  
-    role = models.CharField(max_length=20, default='user')  
+    password_hash = models.TextField()
+    role = models.CharField(max_length=20, default='user')
 
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+
     bio = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
@@ -24,7 +24,7 @@ class Friendship(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_initiated')
     friend = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_received')
-    status = models.CharField(max_length=20, default='pending') 
+    status = models.CharField(max_length=20, default='pending')
     created_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True, blank=True)
 
@@ -63,6 +63,17 @@ class News(models.Model):
     def __str__(self):
         return f"News: {self.title}"
 
+class NewsPhoto(models.Model):
+    id = models.AutoField(primary_key=True)
+    news = models.ForeignKey('News', on_delete=models.CASCADE, related_name='photos')
+    photo = models.ImageField(upload_to='news/', null=False, blank=False)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'news_photos'
+
+    def __str__(self):
+        return f"Photo #{self.id} for News {self.news.id}"
 
 class Event(models.Model):
     id = models.AutoField(primary_key=True)
@@ -74,18 +85,19 @@ class Event(models.Model):
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
 
+    image = models.ImageField(upload_to='events/', null=True, blank=True)
+
     class Meta:
         db_table = 'events'
 
     def __str__(self):
         return f"Event: {self.title}"
 
-
 class EventRegistration(models.Model):
     id = models.AutoField(primary_key=True)
     event = models.ForeignKey('Event', on_delete=models.CASCADE)
     user = models.ForeignKey('User', on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, default='going')  # going/interested/canceled
+    status = models.CharField(max_length=20, default='going')  
     registered_at = models.DateTimeField()
 
     class Meta:
@@ -93,7 +105,6 @@ class EventRegistration(models.Model):
 
     def __str__(self):
         return f"Registration: {self.event.title} - {self.user.username}"
-
 
 class Place(models.Model):
     id = models.AutoField(primary_key=True)
@@ -103,6 +114,9 @@ class Place(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
+
+    added_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True)
+    is_approved = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'places'
@@ -126,12 +140,11 @@ class PlaceRating(models.Model):
         return f"Rating {self.rating} for {self.place.name} by {self.user.username}"
 
 
-
 class Comment(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey('User', on_delete=models.CASCADE)
-    entity_type = models.CharField(max_length=20)  
-    entity_id = models.IntegerField()             
+    entity_type = models.CharField(max_length=20)  # 'news', 'event', 'place', ...
+    entity_id = models.IntegerField()
     content = models.TextField()
     parent_comment_id = models.IntegerField(null=True, blank=True)
     is_deleted = models.BooleanField(default=False)
@@ -144,3 +157,33 @@ class Comment(models.Model):
 
     def __str__(self):
         return f"Comment by {self.user.username} on {self.entity_type} #{self.entity_id}"
+
+class Notification(models.Model):
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey('User', on_delete=models.CASCADE) 
+    type = models.CharField(max_length=50)  
+    message = models.TextField(null=True, blank=True)
+    entity_type = models.CharField(max_length=20, null=True, blank=True)  
+    entity_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'notifications'
+
+    def __str__(self):
+        return f"Notif {self.type} to user {self.user_id}"
+
+class UserActivity(models.Model):
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    action = models.CharField(max_length=50)  
+    entity_type = models.CharField(max_length=20, null=True, blank=True)  
+    entity_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_activity'
+
+    def __str__(self):
+        return f"Activity {self.action} by user {self.user_id}"
