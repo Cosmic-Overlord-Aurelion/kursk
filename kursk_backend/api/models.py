@@ -6,6 +6,8 @@ class User(models.Model):
     email = models.EmailField(unique=True)
     password_hash = models.TextField()
     role = models.CharField(max_length=20, default='user')
+    is_email_confirmed = models.BooleanField(default=False)
+    email_verification_code = models.CharField(max_length=6, null=True, blank=True)
 
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
 

@@ -16,7 +16,6 @@ from .models import (
     UserActivity          
 )
 
-# Импорт сериализаторов
 from .serializers import (
     UserSerializer, FriendshipSerializer, MessageSerializer,
     NewsSerializer, NewsPhotoSerializer,
@@ -25,6 +24,9 @@ from .serializers import (
     CommentSerializer, NotificationSerializer,
     UserActivitySerializer
 )
+
+from django.core.mail import send_mail
+import random
 
 @api_view(['POST'])
 def register_user(request):
@@ -38,15 +40,51 @@ def register_user(request):
     if User.objects.filter(username=username).exists():
         return Response({'error': 'Такой username уже существует'}, status=status.HTTP_400_BAD_REQUEST)
 
+    if User.objects.filter(email=email).exists():
+        return Response({'error': 'Этот e-mail уже зарегистрирован'}, status=status.HTTP_400_BAD_REQUEST)
+
     hashed = make_password(password)
+
+    verification_code = str(random.randint(100000, 999999))
+
     user = User.objects.create(
         username=username,
         email=email,
         password_hash=hashed,
+        is_email_confirmed=False, 
+        email_verification_code=verification_code,
         created_at=timezone.now()
     )
-    ser = UserSerializer(user)
-    return Response(ser.data, status=status.HTTP_201_CREATED)
+
+    subject = "Подтверждение почты"
+    message = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
+    send_mail(subject, message, "noreply@yourdomain.com", [email])
+
+    return Response({
+        'message': 'Код подтверждения отправлен на e-mail.',
+        'user_id': user.id 
+    }, status=status.HTTP_201_CREATED)
+
+@api_view(['POST'])
+def verify_email(request):
+    user_id = request.data.get('user_id')
+    code = request.data.get('code')
+
+    if not user_id or not code:
+        return Response({"error": "Не все поля заполнены"}, status=400)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({"error": "Пользователь не найден"}, status=404)
+
+    if user.email_verification_code == code:
+        user.is_email_confirmed = True
+        user.email_verification_code = None
+        user.save()
+        return Response({"message": "E-mail подтверждён! Теперь можно войти."}, status=200)
+    else:
+        return Response({"error": "Неверный код"}, status=400)
 
 
 @api_view(['PUT', 'PATCH'])
@@ -72,6 +110,8 @@ def login_user(request):
         user = User.objects.get(username=username)
     except User.DoesNotExist:
         return Response({'error': 'Нет такого пользователя'}, status=404)
+    
+    if not user.is_email_confirmed: return Response({"error":"Email not confirmed"}, status=403)
 
     if check_password(password, user.password_hash):
         return Response({'message': 'Успешный вход'}, status=200)
