@@ -37,6 +37,9 @@ def register_user(request):
     if not username or not email or not password:
         return Response({'error': 'Не все поля заполнены'}, status=status.HTTP_400_BAD_REQUEST)
 
+    if len(password) < 6:
+        return Response({'error': 'Пароль должен содержать минимум 6 символов'}, status=status.HTTP_400_BAD_REQUEST)
+
     if User.objects.filter(username=username).exists():
         return Response({'error': 'Такой username уже существует'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -44,26 +47,28 @@ def register_user(request):
         return Response({'error': 'Этот e-mail уже зарегистрирован'}, status=status.HTTP_400_BAD_REQUEST)
 
     hashed = make_password(password)
-
     verification_code = str(random.randint(100000, 999999))
-
     user = User.objects.create(
         username=username,
         email=email,
         password_hash=hashed,
-        is_email_confirmed=False, 
+        is_email_confirmed=False,
         email_verification_code=verification_code,
-        created_at=timezone.now()
+        created_at=timezone.now(),
+        updated_at=timezone.now() 
     )
 
-    subject = "Подтверждение почты"
-    message = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
-    send_mail(subject, message, "noreply@yourdomain.com", [email])
+    try:
+        subject = "Подтверждение почты"
+        message = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
+        send_mail(subject, message, "noreply@yourdomain.com", [email])
+        return Response({
+            'message': 'Код подтверждения отправлен на e-mail.',
+            'user_id': user.id
+        }, status=status.HTTP_201_CREATED)
 
-    return Response({
-        'message': 'Код подтверждения отправлен на e-mail.',
-        'user_id': user.id 
-    }, status=status.HTTP_201_CREATED)
+    except Exception as e:
+        return Response({'error': 'Ошибка при отправке письма. Попробуйте позже.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 def verify_email(request):
