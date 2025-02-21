@@ -26,6 +26,14 @@ from .serializers import (
     CommentSerializer, NotificationSerializer,
     UserActivitySerializer
 )
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from django.contrib.auth.hashers import make_password
+from .models import User
+import logging
+
+logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 def register_user(request):
@@ -45,7 +53,6 @@ def register_user(request):
         return Response({'error': 'Этот e-mail уже зарегистрирован'}, status=status.HTTP_400_BAD_REQUEST)
 
     hashed = make_password(password)
-
     verification_code = str(random.randint(100000, 999999))
 
     user = User.objects.create(
@@ -58,20 +65,34 @@ def register_user(request):
         updated_at=timezone.now()
     )
 
+    SMTP_SERVER = "smtp.yandex.ru"
+    SMTP_PORT = 465
+    SENDER_EMAIL = "dylanbob0@yandex.ru"
+    SENDER_PASSWORD = "qundmssnkzvpurqq"
+
     try:
-        subject = "Подтверждение почты"
-        message = (f"Здравствуйте, {username}!\n\n"
-                   f"Ваш код подтверждения: {verification_code}\n\n"
-                   f"Введите этот код в приложении, чтобы завершить регистрацию.")
-        send_mail(subject, message, "noreply@yourdomain.com", [email])
+        msg = MIMEMultipart()
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = email
+        msg["Subject"] = "Подтверждение почты"
+
+        body = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, email, msg.as_string())
+        server.quit()
+
         return Response({
             'message': 'Код подтверждения отправлен на e-mail.',
             'user_id': user.id
         }, status=status.HTTP_201_CREATED)
 
-    except Exception:
-        return Response({'error': 'Ошибка при отправке письма. Попробуйте позже.'},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        print(f"❌ Ошибка SMTP: {e}")
+        return Response({'error': 'Ошибка при отправке письма. Попробуйте позже.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 @api_view(['POST'])
 def verify_email(request):
@@ -502,3 +523,59 @@ def add_user_activity(request):
         act = s.save()
         return Response(UserActivitySerializer(act).data, status=201)
     return Response(s.errors, status=400)
+
+from django.contrib.auth.hashers import make_password
+
+@api_view(['POST'])
+def request_password_reset(request):
+    email = request.data.get('email')
+
+    if not email:
+        return Response({'error': 'Введите email'}, status=400)
+
+    try:
+        user = User.objects.get(email=email)
+        reset_code = str(random.randint(100000, 999999))
+        user.password_reset_code = reset_code
+        user.password_reset_expires = timezone.now() + timezone.timedelta(minutes=10)
+        user.save()
+
+        send_mail(
+            'Сброс пароля',
+            f'Ваш код сброса пароля: {reset_code}',
+            'noreply@yourdomain.com',
+            [email],
+        )
+        return Response({'message': 'Код сброса отправлен на email'}, status=200)
+
+    except User.DoesNotExist:
+        return Response({'error': 'Нет пользователя с таким email'}, status=404)
+
+
+@api_view(['POST'])
+def confirm_password_reset(request):
+    email = request.data.get('email')
+    reset_code = request.data.get('reset_code')
+    new_password = request.data.get('new_password')
+
+    if not email or not reset_code or not new_password:
+        return Response({'error': 'Не все поля заполнены'}, status=400)
+
+    try:
+        user = User.objects.get(email=email)
+
+        if user.password_reset_code != reset_code:
+            return Response({'error': 'Неверный код'}, status=400)
+
+        if user.password_reset_expires < timezone.now():
+            return Response({'error': 'Код истёк'}, status=400)
+
+        user.password_hash = make_password(new_password)
+        user.password_reset_code = None
+        user.password_reset_expires = None
+        user.save()
+
+        return Response({'message': 'Пароль успешно изменён'}, status=200)
+
+    except User.DoesNotExist:
+        return Response({'error': 'Нет пользователя с таким email'}, status=404)
