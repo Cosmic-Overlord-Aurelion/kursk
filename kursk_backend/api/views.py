@@ -579,3 +579,15 @@ def confirm_password_reset(request):
 
     except User.DoesNotExist:
         return Response({'error': 'Нет пользователя с таким email'}, status=404)
+    
+@api_view(['GET'])
+def check_user_exists(request):
+    email = request.query_params.get('email')
+    if not email:
+        return Response({'error': 'Email parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        user = User.objects.get(email=email)
+        return Response({'exists': True, 'user_id': user.id}, status=status.HTTP_200_OK)
+    except User.DoesNotExist:
+        return Response({'exists': False}, status=status.HTTP_404_NOT_FOUND)
+
