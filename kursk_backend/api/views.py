@@ -3,6 +3,8 @@ from django.utils import timezone
 from django.contrib.auth.hashers import make_password, check_password
 from django.core.mail import send_mail
 import random
+import threading
+
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -540,16 +542,14 @@ def request_password_reset(request):
         user.password_reset_expires = timezone.now() + timezone.timedelta(minutes=10)
         user.save()
 
-        send_mail(
-            'Сброс пароля',
-            f'Ваш код сброса пароля: {reset_code}',
-            'noreply@yourdomain.com',
-            [email],
-        )
+        # Запускаем отправку письма в отдельном потоке
+        threading.Thread(target=send_reset_email, args=(email, user.username, reset_code)).start()
+
         return Response({'message': 'Код сброса отправлен на email'}, status=200)
 
     except User.DoesNotExist:
         return Response({'error': 'Нет пользователя с таким email'}, status=404)
+
 
 
 @api_view(['POST'])
@@ -590,4 +590,28 @@ def check_user_exists(request):
         return Response({'exists': True, 'user_id': user.id}, status=status.HTTP_200_OK)
     except User.DoesNotExist:
         return Response({'exists': False}, status=status.HTTP_404_NOT_FOUND)
+    
+def send_reset_email(email, username, reset_code):
+    SMTP_SERVER = "smtp.yandex.ru"
+    SMTP_PORT = 465
+    SENDER_EMAIL = "dylanbob0@yandex.ru"
+    SENDER_PASSWORD = "qundmssnkzvpurqq"
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = email
+        msg["Subject"] = "Сброс пароля"
+
+        body = f"Здравствуйте, {username}!\n\nВаш код сброса пароля: {reset_code}\n\nВведите этот код в приложении, чтобы сбросить пароль."
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, email, msg.as_string())
+        server.quit()
+        logger.info(f"Reset email sent successfully to {email}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке reset email: {e}")
+
 

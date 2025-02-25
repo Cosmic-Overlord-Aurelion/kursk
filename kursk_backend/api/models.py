@@ -10,7 +10,8 @@ class User(models.Model):
     email_verification_code = models.CharField(max_length=6, null=True, blank=True)
 
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
-
+    password_reset_code = models.CharField(max_length=6, null=True, blank=True)
+    password_reset_expires = models.DateTimeField(null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
