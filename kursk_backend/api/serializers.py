@@ -23,22 +23,22 @@ class FriendshipSerializer(serializers.ModelSerializer):
         model = Friendship
         fields = '__all__'
 
-
 class MessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
         fields = '__all__'
 
-
-class NewsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = News
-        fields = '__all__'
-
 class NewsPhotoSerializer(serializers.ModelSerializer):
     class Meta:
         model = NewsPhoto
-        fields = '__all__'
+        fields = ("id", "photo", "uploaded_at")
+
+class NewsSerializer(serializers.ModelSerializer):
+    photos = NewsPhotoSerializer(many=True, read_only=True)  # Добавлено!
+
+    class Meta:
+        model = News
+        fields = "__all__"
 
 class EventSerializer(serializers.ModelSerializer):
     class Meta:
@@ -55,12 +55,10 @@ class PlaceSerializer(serializers.ModelSerializer):
         model = Place
         fields = '__all__'
 
-
 class PlaceRatingSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlaceRating
         fields = '__all__'
-
 
 class CommentSerializer(serializers.ModelSerializer):
     class Meta:

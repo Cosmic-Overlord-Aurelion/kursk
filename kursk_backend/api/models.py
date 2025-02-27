@@ -58,7 +58,7 @@ class News(models.Model):
     content = models.TextField()
     author = models.ForeignKey('User', on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'news'
@@ -68,7 +68,7 @@ class News(models.Model):
 
 class NewsPhoto(models.Model):
     id = models.AutoField(primary_key=True)
-    news = models.ForeignKey('News', on_delete=models.CASCADE, related_name='photos')
+    news = models.ForeignKey(News, on_delete=models.CASCADE, related_name="photos")
     photo = models.ImageField(upload_to='news/', null=False, blank=False)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 

@@ -260,19 +260,25 @@ def list_news_photos(request, pk):
 
 
 @api_view(['POST'])
-def add_news_photo(request, pk):
+def add_news_photos(request, pk):
     try:
         news_obj = News.objects.get(pk=pk)
     except News.DoesNotExist:
         return Response({'error': 'News not found'}, status=404)
 
-    if 'photo' not in request.FILES:
-        return Response({'error': 'No photo file provided'}, status=400)
+    if 'photos' not in request.FILES:
+        return Response({'error': 'No photo files provided'}, status=400)
 
-    photo_file = request.FILES['photo']
-    new_photo = NewsPhoto.objects.create(news=news_obj, photo=photo_file)
-    ser = NewsPhotoSerializer(new_photo)
+    photos = request.FILES.getlist('photos')  # Получаем список файлов
+    created_photos = []
+
+    for photo_file in photos:
+        new_photo = NewsPhoto.objects.create(news=news_obj, photo=photo_file)
+        created_photos.append(new_photo)
+
+    ser = NewsPhotoSerializer(created_photos, many=True)
     return Response(ser.data, status=201)
+
 
 @api_view(['GET'])
 def list_friendships(request):

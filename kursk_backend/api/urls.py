@@ -7,7 +7,7 @@ from .views import (
     list_events, create_event, register_for_event,
     list_places, create_place, rate_place, approve_place,
     create_comment, list_comments,
-    list_news_photos, add_news_photo,         
+    list_news_photos, add_news_photos,         
     list_notifications, mark_notification_read,   
     list_user_activity, add_user_activity, verify_email, login_user, 
     request_password_reset, confirm_password_reset, check_user_exists  
@@ -18,36 +18,45 @@ urlpatterns = [
     path('users/', list_users, name='list_users'),
     path('users/<int:pk>/', user_detail, name='user_detail'),
     path('users/<int:pk>/avatar/', update_user_avatar, name='update_user_avatar'),
+
     path('news/', news_list, name='news_list'),
     path('news/create/', create_news, name='create_news'),
     path('news/<int:pk>/', news_detail, name='news_detail'),
-    path('news/<int:pk>/photos/', list_news_photos, name='list_news_photos'),
-    path('news/<int:pk>/photos/add/', add_news_photo, name='add_news_photo'),
+
+    path('news/<int:pk>/photos/', list_news_photos, name='list_news_photos'),  
+    path('news/<int:pk>/photos/add/', add_news_photos, name='add_news_photos'),  
+
     path('friendships/', list_friendships, name='list_friendships'),
     path('friendships/add/', add_friend, name='add_friend'),
     path('friendships/accept/', accept_friend, name='accept_friend'),
     path('friendships/remove/', remove_friend, name='remove_friend'),
+
     path('messages/', list_messages, name='list_messages'),
     path('messages/send/', send_message, name='send_message'),
     path('messages/between/<int:user1>/<int:user2>/', get_messages_between, name='get_messages_between'),
+
     path('events/', list_events, name='list_events'),
     path('events/create/', create_event, name='create_event'),
     path('events/register/', register_for_event, name='register_for_event'),
+
     path('password-reset/', request_password_reset, name='request_password_reset'),
     path('password-reset/confirm/', confirm_password_reset, name='confirm_password_reset'),
+
     path('places/', list_places, name='list_places'),
     path('places/create/', create_place, name='create_place'),
     path('places/rate/', rate_place, name='rate_place'),
     path('places/<int:pk>/approve/', approve_place, name='approve_place'),
+
     path('comments/', list_comments, name='list_comments'),
     path('comments/create/', create_comment, name='create_comment'),
+
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),
+
     path('activity/', list_user_activity, name='list_user_activity'),
     path('activity/add/', add_user_activity, name='add_user_activity'),
+
     path('verify_email/', verify_email, name='verify_email'),
     path('login/', login_user, name='login_user'),
-    path('password-reset/', request_password_reset, name='request_password_reset'),
-    path('password-reset/confirm/', confirm_password_reset, name='confirm_password_reset'),
     path('check_user_exists/', check_user_exists, name='check_user_exists'),
 ]
