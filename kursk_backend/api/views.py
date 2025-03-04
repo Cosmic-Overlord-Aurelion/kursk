@@ -191,9 +191,44 @@ def user_detail(request, pk):
         user_obj.delete()
         return Response({'message': 'Пользователь удалён'}, status=204)
 
+from django.db.models import Count, F, Value, FloatField, ExpressionWrapper, Case, When, Q
+from django.utils import timezone
+
 @api_view(['GET'])
 def news_list(request):
-    qs = News.objects.all().order_by('-created_at')
+    qs = News.objects.all()
+    
+    sort_param = request.GET.get('sort')
+    
+    if sort_param == 'date_asc':
+        qs = qs.order_by('created_at')
+    elif sort_param == 'date_desc':
+        qs = qs.order_by('-created_at')
+    elif sort_param == 'popular':
+        qs = qs.order_by('-views_count')
+    elif sort_param == 'recommended':
+
+        qs = qs.annotate(
+            comment_count=Count('comment', filter=Q(comment__entity_type='news', comment__entity_id=F('id')))
+        )
+        qs = qs.annotate(
+            likes_count=Value(0, output_field=FloatField())
+        )
+
+        qs = qs.annotate(
+            rating=ExpressionWrapper(
+                F('views_count') * 0.5 + F('comment_count') * 1 + F('likes_count') * 1.5 +
+                Case(
+                    When(created_at__date=timezone.now().date(), then=Value(10)),
+                    default=Value(0),
+                    output_field=FloatField()
+                ),
+                output_field=FloatField()
+            )
+        ).order_by('-rating')
+    else:
+        qs = qs.order_by('-created_at')
+    
     ser = NewsSerializer(qs, many=True)
     return Response(ser.data, status=200)
 
@@ -233,7 +268,10 @@ def news_detail(request, pk):
 
     if request.method == 'GET':
         s = NewsSerializer(news_obj)
-        return Response(s.data, status=200)
+        data = s.data
+        comment_count = Comment.objects.filter(entity_type='news', entity_id=news_obj.id).count()
+        data['comment_count'] = comment_count
+        return Response(data, status=200)
 
     elif request.method == 'PUT':
         s = NewsSerializer(news_obj, data=request.data, partial=True)
@@ -245,6 +283,7 @@ def news_detail(request, pk):
     elif request.method == 'DELETE':
         news_obj.delete()
         return Response({'message': 'Новость удалена'}, status=204)
+
 
 
 @api_view(['GET'])
@@ -479,9 +518,26 @@ def list_comments(request):
     if entity_id:
         qs = qs.filter(entity_id=entity_id)
 
-    qs = qs.order_by('-created_at')
-    ser = CommentSerializer(qs, many=True)
-    return Response(ser.data, status=200)
+    qs = qs.order_by('created_at')  
+    flat_comments = CommentSerializer(qs, many=True).data
+
+    comment_dict = {}
+    for comment in flat_comments:
+        comment['children'] = []
+        comment_dict[comment['id']] = comment
+
+    root_comments = []
+    for comment in flat_comments:
+        parent_id = comment.get('parent_comment_id')
+        if parent_id:
+            parent = comment_dict.get(parent_id)
+            if parent:
+                parent['children'].append(comment)
+        else:
+            root_comments.append(comment)
+
+    return Response(root_comments, status=200)
+
 
 @api_view(['GET'])
 def list_notifications(request):
@@ -619,5 +675,16 @@ def send_reset_email(email, username, reset_code):
         logger.info(f"Reset email sent successfully to {email}")
     except Exception as e:
         logger.error(f"Ошибка при отправке reset email: {e}")
+
+@api_view(['POST'])
+def add_like(request, pk):
+    try:
+        news_obj = News.objects.get(pk=pk)
+    except News.DoesNotExist:
+        return Response({'error': 'Новость не найдена'}, status=404)
+
+    news_obj.likes += 1
+    news_obj.save()
+    return Response({'message': 'Лайк добавлен', 'likes': news_obj.likes}, status=200)
 
 

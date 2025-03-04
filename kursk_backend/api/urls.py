@@ -10,7 +10,7 @@ from .views import (
     list_news_photos, add_news_photos,         
     list_notifications, mark_notification_read,   
     list_user_activity, add_user_activity, verify_email, login_user, 
-    request_password_reset, confirm_password_reset, check_user_exists  
+    request_password_reset, confirm_password_reset, check_user_exists, add_like
 )
 
 urlpatterns = [
@@ -59,4 +59,6 @@ urlpatterns = [
     path('verify_email/', verify_email, name='verify_email'),
     path('login/', login_user, name='login_user'),
     path('check_user_exists/', check_user_exists, name='check_user_exists'),
+    path('news/<int:pk>/like/', add_like, name='add_like'),
+
 ]
