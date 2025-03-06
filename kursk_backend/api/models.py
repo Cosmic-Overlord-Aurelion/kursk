@@ -8,7 +8,6 @@ class User(models.Model):
     role = models.CharField(max_length=20, default='user')
     is_email_confirmed = models.BooleanField(default=False)
     email_verification_code = models.CharField(max_length=6, null=True, blank=True)
-
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
     password_reset_code = models.CharField(max_length=6, null=True, blank=True)
     password_reset_expires = models.DateTimeField(null=True, blank=True)
@@ -16,11 +15,24 @@ class User(models.Model):
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
 
+    # Дополнительные атрибуты для работы системы аутентификации Django:
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
+
+    @property
+    def is_anonymous(self):
+        return False
+
+    @property
+    def is_authenticated(self):
+        return True
+
     class Meta:
         db_table = 'users'
 
     def __str__(self):
         return f"{self.username} ({self.id})"
+
 
 
 class Friendship(models.Model):
@@ -59,7 +71,6 @@ class News(models.Model):
     author = models.ForeignKey('User', on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
-
     likes = models.IntegerField(default=0)
 
     class Meta:
@@ -193,3 +204,14 @@ class UserActivity(models.Model):
 
     def __str__(self):
         return f"Activity {self.action} by user {self.user_id}"
+    
+class NewsLike(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    news = models.ForeignKey(News, on_delete=models.CASCADE, related_name="news_likes")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'news')  # гарантирует, что одна пара (user, news) будет уникальной
+
+    def __str__(self):
+        return f"Like by {self.user.username} on {self.news.title}"
