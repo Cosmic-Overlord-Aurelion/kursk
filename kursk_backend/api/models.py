@@ -60,11 +60,14 @@ class News(models.Model):
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    likes = models.IntegerField(default=0)
+
     class Meta:
         db_table = 'news'
 
     def __str__(self):
         return f"News: {self.title}"
+
 
 class NewsPhoto(models.Model):
     id = models.AutoField(primary_key=True)
