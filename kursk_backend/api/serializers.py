@@ -61,9 +61,12 @@ class PlaceRatingSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class CommentSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    
     class Meta:
         model = Comment
         fields = '__all__'
+
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:

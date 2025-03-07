@@ -75,72 +75,8 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def register_user(request):
-    username = request.data.get('username')
-    email = request.data.get('email')
-    password = request.data.get('password')
-
-    if not username or not email or not password:
-        return Response({'error': 'Не все поля заполнены'}, status=400)
-
-    if len(password) < 6:
-        return Response({'error': 'Пароль должен содержать минимум 6 символов'}, status=400)
-
-    if User.objects.filter(username=username).exists():
-        return Response({'error': 'Такой username уже существует'}, status=400)
-
-    if User.objects.filter(email=email).exists():
-        return Response({'error': 'Этот e-mail уже зарегистрирован'}, status=400)
-
-    hashed_password = make_password(password)  # ✅ Хешируем пароль перед сохранением
-    verification_code = str(random.randint(100000, 999999))
-
-    try:
-        user = User.objects.create(
-            username=username,
-            email=email,
-            password_hash=hashed_password,  # ✅ Используем password_hash вместо password
-            is_email_confirmed=False,
-            email_verification_code=verification_code,
-            created_at=timezone.now()
-        )
-
-        # Отправляем код подтверждения на email
-        send_verification_email(email, username, verification_code)
-
-        return Response({'message': 'Код подтверждения отправлен на e-mail.', 'user_id': user.id}, status=201)
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка при создании пользователя: {e}")
-        return Response({'error': 'Ошибка при регистрации. Попробуйте позже.'}, status=500)
-
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login_user(request):
-    email = request.data.get('email')
-    password = request.data.get('password')
-
-    if not email or not password:
-        return Response({'error': 'Не все поля заполнены'}, status=400)
-
-    try:
-        user = User.objects.get(email=email)
-    except User.DoesNotExist:
-        return Response({'error': 'Нет такого пользователя'}, status=404)
-
-    if not user.is_email_confirmed:
-        return Response({'error': 'Email не подтверждён'}, status=403)
-
-    if check_password(password, user.password_hash):  # ✅ Исправлено на password_hash
-        token, created = Token.objects.get_or_create(user=user)
-        return Response({'message': 'Успешный вход', 'user_id': user.id, 'token': token.key}, status=200)
-
-    return Response({'error': 'Неверный пароль'}, status=400)
-
-
 def send_verification_email(email, username, verification_code):
+    """Отправка email с кодом подтверждения."""
     SMTP_SERVER = "smtp.yandex.ru"
     SMTP_PORT = 465
     SENDER_EMAIL = "dylanbob0@yandex.ru"
@@ -151,19 +87,104 @@ def send_verification_email(email, username, verification_code):
         msg["From"] = SENDER_EMAIL
         msg["To"] = email
         msg["Subject"] = "Подтверждение почты"
-        
-        body = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
+
+        body = (
+            f"Здравствуйте, {username}!\n\n"
+            f"Ваш код подтверждения: {verification_code}\n\n"
+            "Введите этот код в приложении, чтобы завершить регистрацию."
+        )
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
         server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, email, msg.as_string())
         server.quit()
-
         logger.info(f"✅ Код подтверждения успешно отправлен на {email}")
-
     except Exception as e:
         logger.error(f"❌ Ошибка при отправке email: {e}")
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def register_user(request):
+    username = request.data.get('username')
+    email = request.data.get('email')
+    password = request.data.get('password')
+
+    if not username or not email or not password:
+        return Response({'error': 'Не все поля заполнены'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if len(password) < 6:
+        return Response({'error': 'Пароль должен содержать минимум 6 символов'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(username=username).exists():
+        return Response({'error': 'Такой username уже существует'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(email=email).exists():
+        return Response({'error': 'Этот e-mail уже зарегистрирован'}, status=status.HTTP_400_BAD_REQUEST)
+
+    verification_code = str(random.randint(100000, 999999))
+
+    try:
+        # Используем менеджер create_user, который уже вызывает set_password
+        user = User.objects.create_user(
+            username=username,
+            email=email,
+            password=password
+        )
+        # Устанавливаем дополнительные поля
+        user.is_email_confirmed = False
+        user.email_verification_code = verification_code
+        user.created_at = timezone.now()
+        user.save()
+
+        # Создаём токен сразу после регистрации
+        token = Token.objects.create(user=user)
+
+        # Отправляем код подтверждения на email (в отдельном потоке можно запустить, если нужно)
+        threading.Thread(target=send_verification_email, args=(email, username, verification_code)).start()
+
+        return Response({
+            'message': 'Код подтверждения отправлен на e-mail.',
+            'user_id': user.id,
+            'token': token.key
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании пользователя: {e}")
+        return Response({'error': 'Ошибка при регистрации. Попробуйте позже.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_user(request):
+    email = request.data.get('email')
+    password = request.data.get('password')
+
+    if not email or not password:
+        return Response({'error': 'Не все поля заполнены'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return Response({'error': 'Нет такого пользователя'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not user.is_email_confirmed:
+        return Response({'error': 'Email не подтверждён'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Проверяем пароль через стандартное поле password (хранится в зашифрованном виде)
+    if check_password(password, user.password):
+        # Для обеспечения уникальности токена удаляем старые
+        Token.objects.filter(user=user).delete()
+        token = Token.objects.create(user=user)
+        return Response({
+            'message': 'Успешный вход',
+            'user_id': user.id,
+            'token': token.key
+        }, status=status.HTTP_200_OK)
+
+    return Response({'error': 'Неверный пароль'}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 
@@ -189,37 +210,6 @@ def verify_email(request):
         return Response({"message": "E-mail подтверждён! Теперь можно войти."}, status=200)
 
     return Response({"error": "Неверный код"}, status=400)
-
-# =================== Аутентификация =================== #
-
-def send_verification_email(email, username, verification_code):
-    SMTP_SERVER = "smtp.yandex.ru"
-    SMTP_PORT = 465
-    SENDER_EMAIL = "dylanbob0@yandex.ru"
-    SENDER_PASSWORD = "qundmssnkzvpurqq"
-
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = SENDER_EMAIL
-        msg["To"] = email
-        msg["Subject"] = "Подтверждение почты"
-        
-        body = f"Здравствуйте, {username}!\n\nВаш код подтверждения: {verification_code}\n\nВведите этот код в приложении, чтобы завершить регистрацию."
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-
-        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, email, msg.as_string())
-        server.quit()
-
-        logger.info(f"✅ Код подтверждения успешно отправлен на {email}")
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка при отправке email: {e}")
-
-
-
-# =================== Лайки =================== #
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -523,20 +513,22 @@ def list_messages(request):
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated]) 
 def send_message(request):
-    from_user_id = request.data.get('from_user_id')
-    to_user_id = request.data.get('to_user_id')
+    sender = request.user 
+    receiver_id = request.data.get('receiver_id')
     content = request.data.get('content')
-    if not all([from_user_id, to_user_id, content]):
-        return Response({'error': 'Не все поля'}, status=400)
 
-    msg = Message.objects.create(
-        from_user_id=from_user_id,
-        to_user_id=to_user_id,
-        content=content,
-        sent_at=timezone.now()
-    )
-    return Response(MessageSerializer(msg).data, status=201)
+    if not receiver_id or not content:
+        return Response({'error': 'Не все поля заполнены'}, status=400)
+
+    try:
+        receiver = User.objects.get(id=receiver_id)
+        message = Message.objects.create(sender=sender, receiver=receiver, content=content)
+        return Response({'message': 'Сообщение отправлено', 'message_id': message.id}, status=201)
+    except User.DoesNotExist:
+        return Response({'error': 'Получатель не найден'}, status=404)
+
 
 
 @api_view(['GET'])
@@ -624,22 +616,22 @@ def approve_place(request, pk):
     place_obj.save()
     return Response({'message': 'Place approved'}, status=200)
 
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_comment(request):
     data = request.data.copy()
     data['created_at'] = str(timezone.now())
-    
-    # Устанавливаем автора комментария из request.user
     data['user'] = request.user.id
 
     s = CommentSerializer(data=data)
     if s.is_valid():
         com = s.save()
-        return Response(CommentSerializer(com).data, status=201)
-    return Response(s.errors, status=400)
+        return Response(
+            CommentSerializer(com).data, 
+            status=status.HTTP_201_CREATED,
+            content_type="application/json"  
+        )
+    return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET'])
