@@ -62,10 +62,30 @@ class PlaceRatingSerializer(serializers.ModelSerializer):
 
 class CommentSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
-    
+
     class Meta:
         model = Comment
         fields = '__all__'
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['user'] = request.user
+        return super().create(validated_data)
+
+    def validate(self, data):
+        entity_type = data.get('entity_type')
+        entity_id = data.get('entity_id')
+
+        if entity_type == 'news':
+            if not News.objects.filter(id=entity_id).exists():
+                raise serializers.ValidationError("Новость с таким ID не существует.")
+        elif entity_type == 'event':
+            if not Event.objects.filter(id=entity_id).exists():
+                raise serializers.ValidationError("Мероприятие с таким ID не существует.")
+        else:
+            raise serializers.ValidationError("Недопустимый entity_type. Допустимые значения: 'news' или 'event'.")
+        return data
 
 
 class NotificationSerializer(serializers.ModelSerializer):

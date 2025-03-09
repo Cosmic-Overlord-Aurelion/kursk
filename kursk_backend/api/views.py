@@ -620,18 +620,17 @@ def approve_place(request, pk):
 @permission_classes([IsAuthenticated])
 def create_comment(request):
     data = request.data.copy()
-    data['created_at'] = str(timezone.now())
-    data['user'] = request.user.id
-
-    s = CommentSerializer(data=data)
-    if s.is_valid():
-        com = s.save()
+    data['created_at'] = timezone.now() 
+    
+    serializer = CommentSerializer(data=data, context={'request': request})
+    if serializer.is_valid():
+        com = serializer.save()
         return Response(
             CommentSerializer(com).data, 
             status=status.HTTP_201_CREATED,
-            content_type="application/json"  
+            content_type="application/json"
         )
-    return Response(s.errors, status=status.HTTP_400_BAD_REQUEST)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET'])
