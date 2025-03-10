@@ -82,21 +82,21 @@ class Message(models.Model):
     def __str__(self):
         return f"Msg from {self.from_user.username} to {self.to_user.username}"
 
+from django.contrib.auth import get_user_model
+User = get_user_model()
 
 class News(models.Model):
-    id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=255)
-    content = models.TextField()
-    author = models.ForeignKey('User', on_delete=models.CASCADE)
-    views_count = models.IntegerField(default=0)
+    subheader = models.CharField(max_length=500, blank=True, null=True)  # Новое поле для краткого описания
+    full_text = models.TextField()  # Полное содержание новости
+    author = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
-    likes = models.IntegerField(default=0)
-
-    class Meta:
-        db_table = 'news'
-
+    views_count = models.PositiveIntegerField(default=0)
+    likes = models.PositiveIntegerField(default=0)
+    # Дополнительные поля, например, для фото и т.д.
+    
     def __str__(self):
-        return f"News: {self.title}"
+        return self.title
 
 
 class NewsPhoto(models.Model):

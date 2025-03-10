@@ -15,20 +15,14 @@ class NewsPhotoInline(admin.TabularInline):
 
 @admin.register(News)
 class NewsAdmin(admin.ModelAdmin):
-    """
-    Классическая админка для News с инлайн-фото
-    """
     inlines = [NewsPhotoInline]
-    # Добавляем 'likes', если это поле есть в модели News
-    list_display = ('id', 'title', 'created_at', 'views_count', 'likes')
-    search_fields = ('title', 'content')
+    list_display = ('id', 'title', 'subheader', 'created_at', 'views_count', 'likes')
+    search_fields = ('title', 'subheader', 'full_text')
     ordering = ('-created_at',)
+
 
 @admin.register(NewsPhoto)
 class NewsPhotoAdmin(admin.ModelAdmin):
-    """
-    Админка для просмотра и поиска по фото
-    """
     list_display = ('id', 'news', 'uploaded_at')
     search_fields = ('news__title',)
 

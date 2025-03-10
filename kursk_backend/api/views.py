@@ -312,13 +312,15 @@ def user_detail(request, pk):
 
 from django.db.models import Count, F, Value, FloatField, ExpressionWrapper, Case, When, Q
 from django.utils import timezone
+from .serializers import NewsListSerializer, NewsDetailSerializer
+
 
 @api_view(['GET'])
 def news_list(request):
-    qs = News.objects.all()
+    qs = News.objects.prefetch_related('photos').all()
+    ser = NewsSerializer(qs, many=True)
     
     sort_param = request.GET.get('sort')
-    
     if sort_param == 'date_asc':
         qs = qs.order_by('created_at')
     elif sort_param == 'date_desc':
@@ -326,14 +328,12 @@ def news_list(request):
     elif sort_param == 'popular':
         qs = qs.order_by('-views_count')
     elif sort_param == 'recommended':
-
         qs = qs.annotate(
             comment_count=Count('comment', filter=Q(comment__entity_type='news', comment__entity_id=F('id')))
         )
         qs = qs.annotate(
             likes_count=Value(0, output_field=FloatField())
         )
-
         qs = qs.annotate(
             rating=ExpressionWrapper(
                 F('views_count') * 0.5 + F('comment_count') * 1 + F('likes_count') * 1.5 +
@@ -348,15 +348,17 @@ def news_list(request):
     else:
         qs = qs.order_by('-created_at')
     
-    ser = NewsSerializer(qs, many=True)
+    ser = NewsListSerializer(qs, many=True)
     return Response(ser.data, status=200)
 
 
 @api_view(['POST'])
 def create_news(request):
+    # Теперь ожидаем поля: title, subheader, full_text
     author_id = request.data.get('author_id')
     title = request.data.get('title')
-    content = request.data.get('content')
+    subheader = request.data.get('subheader')
+    full_text = request.data.get('full_text')
 
     try:
         author = User.objects.get(id=author_id)
@@ -367,14 +369,15 @@ def create_news(request):
 
     data = {
         'title': title,
-        'content': content,
+        'subheader': subheader,
+        'full_text': full_text,
         'author': author_id,
         'created_at': timezone.now()
     }
-    s = NewsSerializer(data=data)
+    s = NewsDetailSerializer(data=data)
     if s.is_valid():
         news_obj = s.save(author=author)
-        return Response(NewsSerializer(news_obj).data, status=201)
+        return Response(NewsDetailSerializer(news_obj).data, status=201)
     return Response(s.errors, status=400)
 
 
@@ -386,18 +389,19 @@ def news_detail(request, pk):
         return Response({'error': 'Новость не найдена'}, status=404)
 
     if request.method == 'GET':
-        s = NewsSerializer(news_obj)
-        data = s.data
+        # Используем детальный сериализатор, который возвращает полный контент
+        ser = NewsDetailSerializer(news_obj)
+        data = ser.data
         comment_count = Comment.objects.filter(entity_type='news', entity_id=news_obj.id).count()
         data['comment_count'] = comment_count
         return Response(data, status=200)
 
     elif request.method == 'PUT':
-        s = NewsSerializer(news_obj, data=request.data, partial=True)
-        if s.is_valid():
-            s.save()
-            return Response(s.data, status=200)
-        return Response(s.errors, status=400)
+        ser = NewsDetailSerializer(news_obj, data=request.data, partial=True)
+        if ser.is_valid():
+            ser.save()
+            return Response(ser.data, status=200)
+        return Response(ser.errors, status=400)
 
     elif request.method == 'DELETE':
         news_obj.delete()

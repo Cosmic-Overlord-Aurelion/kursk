@@ -28,17 +28,43 @@ class MessageSerializer(serializers.ModelSerializer):
         model = Message
         fields = '__all__'
 
+
 class NewsPhotoSerializer(serializers.ModelSerializer):
     class Meta:
         model = NewsPhoto
-        fields = ("id", "photo", "uploaded_at")
+        fields = ('id', 'photo', 'uploaded_at')
 
-class NewsSerializer(serializers.ModelSerializer):
-    photos = NewsPhotoSerializer(many=True, read_only=True)  # Добавлено!
+class NewsDetailSerializer(serializers.ModelSerializer):
+    photos = NewsPhotoSerializer(many=True, read_only=True)  # если у модели настроено related_name="photos"
 
     class Meta:
         model = News
-        fields = "__all__"
+        fields = (
+            'id',
+            'title',
+            'subheader',
+            'full_text',
+            'author',
+            'created_at',
+            'views_count',
+            'likes',
+            'photos'
+        )
+
+class NewsListSerializer(serializers.ModelSerializer):
+    photos = NewsPhotoSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = News
+        fields = ['id', 'title', 'subheader', 'views_count', 'likes', 'photos']
+
+
+class NewsSerializer(serializers.ModelSerializer):
+    photos = NewsPhotoSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = News
+        fields = ['id', 'title', 'subheader', 'full_text', 'views_count', 'likes', 'photos']
 
 class EventSerializer(serializers.ModelSerializer):
     class Meta:
