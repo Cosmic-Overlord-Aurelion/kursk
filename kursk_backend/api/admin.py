@@ -33,13 +33,20 @@ class CommentAdmin(admin.ModelAdmin):
     list_display и search_fields можно настроить под свои нужды.
     """
     list_display = (
-        'id', 'user', 'entity_type', 'entity_id',
-        'parent_comment_id', 'content', 'created_at'
+        'id', 'user', 'get_content_type', 'object_id',
+        'get_parent_comment_id', 'content', 'created_at'
     )
     search_fields = ('content', 'user__username')
-    list_filter = ('entity_type',)
+    list_filter = ('content_type',)
 
-# Остальные модели
+    def get_content_type(self, obj):
+        return obj.content_type.model if obj.content_type else None
+    get_content_type.short_description = "Content Type"
+
+    def get_parent_comment_id(self, obj):
+        return obj.parent_comment.id if obj.parent_comment else None
+    get_parent_comment_id.short_description = "Parent Comment ID"
+
 admin.site.register(User)
 admin.site.register(Friendship)
 admin.site.register(Message)

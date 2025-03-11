@@ -40,7 +40,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from .models import User
 import logging
-
+from rest_framework.response import Response
+from rest_framework.decorators import api_view
+from .models import Comment
+from .serializers import CommentSerializer
 logger = logging.getLogger(__name__)
 
 import random
@@ -318,25 +321,27 @@ from .serializers import NewsListSerializer, NewsDetailSerializer
 @api_view(['GET'])
 def news_list(request):
     qs = News.objects.prefetch_related('photos').all()
-    ser = NewsSerializer(qs, many=True)
-    
     sort_param = request.GET.get('sort')
+    
     if sort_param == 'date_asc':
         qs = qs.order_by('created_at')
     elif sort_param == 'date_desc':
         qs = qs.order_by('-created_at')
     elif sort_param == 'popular':
-        qs = qs.order_by('-views_count')
+        qs = qs.annotate(
+            comment_count=Count('comments')
+        ).annotate(
+            rating=ExpressionWrapper(
+                F('views_count') * 0.3 + F('likes') * 1.5 + F('comment_count') * 1.0,
+                output_field=FloatField()
+            )
+        ).order_by('-rating')
     elif sort_param == 'recommended':
         qs = qs.annotate(
-            comment_count=Count('comment', filter=Q(comment__entity_type='news', comment__entity_id=F('id')))
-        )
-        qs = qs.annotate(
-            likes_count=Value(0, output_field=FloatField())
-        )
-        qs = qs.annotate(
+            comment_count=Count('comments')
+        ).annotate(
             rating=ExpressionWrapper(
-                F('views_count') * 0.5 + F('comment_count') * 1 + F('likes_count') * 1.5 +
+                F('views_count') * 0.5 + F('likes') * 1.5 + F('comment_count') * 1.0 +
                 Case(
                     When(created_at__date=timezone.now().date(), then=Value(10)),
                     default=Value(0),
@@ -352,9 +357,9 @@ def news_list(request):
     return Response(ser.data, status=200)
 
 
+
 @api_view(['POST'])
 def create_news(request):
-    # Теперь ожидаем поля: title, subheader, full_text
     author_id = request.data.get('author_id')
     title = request.data.get('title')
     subheader = request.data.get('subheader')
@@ -381,6 +386,8 @@ def create_news(request):
     return Response(s.errors, status=400)
 
 
+from django.contrib.contenttypes.models import ContentType
+
 @api_view(['GET', 'PUT', 'DELETE'])
 def news_detail(request, pk):
     try:
@@ -389,10 +396,10 @@ def news_detail(request, pk):
         return Response({'error': 'Новость не найдена'}, status=404)
 
     if request.method == 'GET':
-        # Используем детальный сериализатор, который возвращает полный контент
         ser = NewsDetailSerializer(news_obj)
         data = ser.data
-        comment_count = Comment.objects.filter(entity_type='news', entity_id=news_obj.id).count()
+        news_ct = ContentType.objects.get_for_model(News)
+        comment_count = Comment.objects.filter(content_type=news_ct, object_id=news_obj.id).count()
         data['comment_count'] = comment_count
         return Response(data, status=200)
 
@@ -406,6 +413,7 @@ def news_detail(request, pk):
     elif request.method == 'DELETE':
         news_obj.delete()
         return Response({'message': 'Новость удалена'}, status=204)
+
 
 
 
@@ -636,19 +644,23 @@ def create_comment(request):
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+from django.contrib.contenttypes.models import ContentType
 @api_view(['GET'])
 def list_comments(request):
-    entity_type = request.GET.get('entity_type')
-    entity_id = request.GET.get('entity_id')
+    entity_type_param = request.GET.get('entity_type')
+    entity_id_param = request.GET.get('entity_id')
 
     qs = Comment.objects.all()
-    if entity_type:
-        qs = qs.filter(entity_type=entity_type)
-    if entity_id:
-        qs = qs.filter(entity_id=entity_id)
+    if entity_type_param:
+        try:
+            ct = ContentType.objects.get(model=entity_type_param.lower())
+            qs = qs.filter(content_type=ct)
+        except ContentType.DoesNotExist:
+            return Response({"error": "Invalid entity_type"}, status=400)
+    if entity_id_param:
+        qs = qs.filter(object_id=entity_id_param)
 
-    qs = qs.order_by('created_at')  
+    qs = qs.order_by('created_at')
     flat_comments = CommentSerializer(qs, many=True).data
 
     comment_dict = {}

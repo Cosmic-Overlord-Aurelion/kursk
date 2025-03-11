@@ -1,8 +1,9 @@
 from django.db import models
-
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.db import models
 from django.utils import timezone
+from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 
 class UserManager(BaseUserManager):
     def create_user(self, email, username, password=None):
@@ -10,7 +11,7 @@ class UserManager(BaseUserManager):
             raise ValueError("У пользователя должен быть email")
         user = self.model(email=self.normalize_email(email), username=username)
         if password:
-            user.set_password(password)  # Хешируем пароль
+            user.set_password(password)  
         user.save(using=self._db)
         return user
 
@@ -20,7 +21,6 @@ class UserManager(BaseUserManager):
         user.is_superuser = True
         user.save(using=self._db)
         return user
-
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.AutoField(primary_key=True)
@@ -82,22 +82,21 @@ class Message(models.Model):
     def __str__(self):
         return f"Msg from {self.from_user.username} to {self.to_user.username}"
 
-from django.contrib.auth import get_user_model
+
 User = get_user_model()
 
 class News(models.Model):
     title = models.CharField(max_length=255)
-    subheader = models.CharField(max_length=500, blank=True, null=True)  # Новое поле для краткого описания
-    full_text = models.TextField()  # Полное содержание новости
+    subheader = models.CharField(max_length=500, blank=True, null=True)
+    full_text = models.TextField()
     author = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     views_count = models.PositiveIntegerField(default=0)
     likes = models.PositiveIntegerField(default=0)
-    # Дополнительные поля, например, для фото и т.д.
-    
+    comments = GenericRelation('Comment')  
+
     def __str__(self):
         return self.title
-
 
 class NewsPhoto(models.Model):
     id = models.AutoField(primary_key=True)
@@ -120,7 +119,6 @@ class Event(models.Model):
     organizer = models.ForeignKey('User', on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
-
     image = models.ImageField(upload_to='events/', null=True, blank=True)
 
     class Meta:
@@ -150,7 +148,6 @@ class Place(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
-
     added_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True)
     is_approved = models.BooleanField(default=False)
 
@@ -159,7 +156,6 @@ class Place(models.Model):
 
     def __str__(self):
         return f"Place: {self.name}"
-
 
 class PlaceRating(models.Model):
     id = models.AutoField(primary_key=True)
@@ -179,20 +175,21 @@ class PlaceRating(models.Model):
 class Comment(models.Model):
     id = models.AutoField(primary_key=True)
     user = models.ForeignKey('User', on_delete=models.CASCADE)
-    entity_type = models.CharField(max_length=20)  # 'news', 'event', 'place', ...
-    entity_id = models.IntegerField()
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, blank=True)
+    object_id = models.PositiveIntegerField()
+    entity = GenericForeignKey('content_type', 'object_id')
     content = models.TextField()
-    parent_comment_id = models.IntegerField(null=True, blank=True)
+    parent_comment = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     deleted_by = models.IntegerField(null=True, blank=True)
-    created_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'comments'
 
     def __str__(self):
-        return f"Comment by {self.user.username} on {self.entity_type} #{self.entity_id}"
+        return f"Comment by {self.user.username} on {self.content_type} #{self.object_id}"
 
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
@@ -230,7 +227,7 @@ class NewsLike(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'news')  # гарантирует, что одна пара (user, news) будет уникальной
+        unique_together = ('user', 'news')
 
     def __str__(self):
         return f"Like by {self.user.username} on {self.news.title}"
