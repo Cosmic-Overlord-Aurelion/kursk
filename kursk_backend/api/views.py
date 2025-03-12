@@ -129,13 +129,11 @@ def register_user(request):
     verification_code = str(random.randint(100000, 999999))
 
     try:
-        # Используем менеджер create_user, который уже вызывает set_password
         user = User.objects.create_user(
             username=username,
             email=email,
             password=password
         )
-        # Устанавливаем дополнительные поля
         user.is_email_confirmed = False
         user.email_verification_code = verification_code
         user.created_at = timezone.now()
@@ -237,7 +235,18 @@ def add_like(request, pk):
 
     return Response({'message': message, 'likes': news_obj.likes}, status=200)
 
-# =================== Сброс пароля =================== #
+@api_view(['POST'])
+def add_view(request, pk):
+    try:
+        news_obj = News.objects.get(pk=pk)
+    except News.DoesNotExist:
+        return Response({'error': 'News not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    news_obj.views_count = F('views_count') + 1
+    news_obj.save()
+    news_obj.refresh_from_db()  
+    
+    return Response({'views_count': news_obj.views_count}, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 def confirm_password_reset(request):
@@ -523,7 +532,6 @@ def list_messages(request):
     ser = MessageSerializer(qs, many=True)
     return Response(ser.data, status=200)
 
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated]) 
 def send_message(request):
@@ -541,8 +549,6 @@ def send_message(request):
     except User.DoesNotExist:
         return Response({'error': 'Получатель не найден'}, status=404)
 
-
-
 @api_view(['GET'])
 def get_messages_between(request, user1, user2):
     qs = Message.objects.filter(
@@ -551,6 +557,21 @@ def get_messages_between(request, user1, user2):
     ).order_by('sent_at')
     ser = MessageSerializer(qs, many=True)
     return Response(ser.data, status=200)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_comment(request, comment_id):
+    try:
+        comment = Comment.objects.get(pk=comment_id)
+    except Comment.DoesNotExist:
+        return Response({"detail": "Комментарий не найден"}, status=404)
+
+    if comment.user != request.user and not request.user.is_superuser:
+        return Response({"detail": "Нет прав"}, status=403)
+
+    comment.delete()  
+    return Response({"detail": "Комментарий удалён окончательно"}, status=204)
+
 
 @api_view(['GET'])
 def list_events(request):
@@ -631,17 +652,21 @@ def approve_place(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_comment(request):
+    # Копируем данные, чтобы можно было ими манипулировать
     data = request.data.copy()
-    data['created_at'] = timezone.now() 
-    
+    # Добавляем метку времени (если нужно)
+    data['created_at'] = timezone.now()
+
+    # Создаем сериализатор, передавая данные и контекст
     serializer = CommentSerializer(data=data, context={'request': request})
     if serializer.is_valid():
-        com = serializer.save()
+        com = serializer.save()  # Сохраняем комментарий
         return Response(
-            CommentSerializer(com).data, 
+            CommentSerializer(com).data,  # Возвращаем сериализованные данные нового коммента
             status=status.HTTP_201_CREATED,
             content_type="application/json"
         )
+    # Если не валидно, возвращаем ошибки
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 from django.contrib.contenttypes.models import ContentType
@@ -680,6 +705,49 @@ def list_comments(request):
 
     return Response(root_comments, status=200)
 
+from django.shortcuts import get_object_or_404
+from .models import CommentLike
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def toggle_comment_like(request, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id)
+    existing_like = CommentLike.objects.filter(user=request.user, comment=comment).first()
+    if existing_like:
+        existing_like.delete()
+        message = "Лайк снят"
+    else:
+        CommentLike.objects.create(user=request.user, comment=comment)
+        message = "Лайк поставлен"
+
+    current_likes = comment.comment_likes.count()
+    return Response({
+        "comment_id": comment_id,
+        "message": message,
+        "likes_count": current_likes
+    }, status=200)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def update_comment(request, comment_id):
+
+    try:
+        comment = Comment.objects.get(pk=comment_id, is_deleted=False)
+    except Comment.DoesNotExist:
+        return Response({"detail": "Комментарий не найден или удалён"}, status=404)
+
+    if comment.user != request.user and not request.user.is_superuser: 
+        return Response({"detail": "У вас нет прав на редактирование этого комментария"}, status=403)
+
+    new_content = request.data.get('content')
+    if not new_content:
+        return Response({"detail": "Отсутствует новое содержимое (content)"}, status=400)
+
+    comment.content = new_content
+    comment.save(update_fields=['content']) 
+
+    ser = CommentSerializer(comment)
+    return Response(ser.data, status=200)
 
 @api_view(['GET'])
 def list_notifications(request):

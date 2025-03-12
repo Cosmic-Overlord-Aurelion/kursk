@@ -86,32 +86,56 @@ class PlaceRatingSerializer(serializers.ModelSerializer):
         model = PlaceRating
         fields = '__all__'
 
+from rest_framework import serializers
+from django.contrib.contenttypes.models import ContentType
+from .models import Comment
+from .serializers import UserSerializer
+
 class CommentSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    likes_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
         fields = '__all__'
 
+    def get_likes_count(self, obj):
+        return obj.comment_likes.count()
+
     def create(self, validated_data):
+        """
+        Когда мы вызываем serializer.save() во вью,
+        этот метод привяжет комментарий к request.user (если есть)
+        и потом вызовет super().create().
+        """
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             validated_data['user'] = request.user
         return super().create(validated_data)
 
     def validate(self, data):
-        entity_type = data.get('entity_type')
-        entity_id = data.get('entity_id')
+        """
+        Здесь мы берем entity_type и entity_id (пришедшие в self.initial_data),
+        мапим их на content_type и object_id, нужные модели Comment (GenericForeignKey).
+        """
+        entity_type = self.initial_data.get('entity_type')
+        entity_id = self.initial_data.get('entity_id')
 
-        if entity_type == 'news':
-            if not News.objects.filter(id=entity_id).exists():
-                raise serializers.ValidationError("Новость с таким ID не существует.")
-        elif entity_type == 'event':
-            if not Event.objects.filter(id=entity_id).exists():
-                raise serializers.ValidationError("Мероприятие с таким ID не существует.")
-        else:
-            raise serializers.ValidationError("Недопустимый entity_type. Допустимые значения: 'news' или 'event'.")
+        if not entity_type or not entity_id:
+            raise serializers.ValidationError("Необходимо указать entity_type и entity_id.")
+
+        # Ищем ContentType по названию модели
+        try:
+            content_type = ContentType.objects.get(model=entity_type.lower())
+        except ContentType.DoesNotExist:
+            raise serializers.ValidationError("Некорректный entity_type.")
+
+        # Присваиваем нужные поля
+        data['content_type'] = content_type
+        data['object_id'] = entity_id
+
         return data
+
 
 
 class NotificationSerializer(serializers.ModelSerializer):

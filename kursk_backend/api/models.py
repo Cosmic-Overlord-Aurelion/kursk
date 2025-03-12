@@ -231,3 +231,15 @@ class NewsLike(models.Model):
 
     def __str__(self):
         return f"Like by {self.user.username} on {self.news.title}"
+    
+class CommentLike(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name='comment_likes')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'comment')
+
+    def __str__(self):
+        return f"Like by {self.user.username} on comment #{self.comment.id}"
+

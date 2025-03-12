@@ -1,16 +1,24 @@
 from django.urls import path
 from .views import (
-    register_user, list_users, user_detail, update_user_avatar,
-    news_list, create_news, news_detail,
-    list_friendships, add_friend, accept_friend, remove_friend,
-    list_messages, send_message, get_messages_between,
-    list_events, create_event, register_for_event,
-    list_places, create_place, rate_place, approve_place,
-    create_comment, list_comments,
-    list_news_photos, add_news_photos,         
-    list_notifications, mark_notification_read,   
-    list_user_activity, add_user_activity, verify_email, login_user, 
-    request_password_reset, confirm_password_reset, check_user_exists, add_like
+    register_user,list_users,
+    user_detail,update_user_avatar,
+    news_list,create_news,
+    news_detail,list_friendships,
+    add_friend,accept_friend,
+    remove_friend,list_messages,
+    send_message,get_messages_between,
+    list_events,create_event,
+    register_for_event,list_places,
+    create_place,rate_place,
+    approve_place,create_comment,
+    list_comments,list_news_photos,
+    add_news_photos,list_notifications,
+    mark_notification_read,list_user_activity,
+    add_user_activity,verify_email,
+    login_user,request_password_reset,
+    confirm_password_reset,check_user_exists,
+    add_like,add_view,delete_comment,
+    update_comment,toggle_comment_like,
 )
 
 urlpatterns = [
@@ -50,6 +58,10 @@ urlpatterns = [
     path('comments/', list_comments, name='list_comments'),
     path('comments/create/', create_comment, name='create_comment'),
 
+    path('comments/<int:comment_id>/delete/', delete_comment, name='delete_comment'),
+    path('comments/<int:comment_id>/update/', update_comment, name='update_comment'),
+    path('comments/<int:comment_id>/like_toggle/', toggle_comment_like, name='toggle_comment_like'),
+
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),
 
@@ -60,5 +72,5 @@ urlpatterns = [
     path('login/', login_user, name='login_user'),
     path('check_user_exists/', check_user_exists, name='check_user_exists'),
     path('news/<int:pk>/like/', add_like, name='add_like'),
-
+    path('news/<int:pk>/add_view/', add_view, name='add_view'),
 ]
