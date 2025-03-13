@@ -97,42 +97,48 @@ class CommentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Comment
-        fields = '__all__'
+        fields = ['id', 'user', 'content_type', 'object_id', 'content', 'parent_comment', 'created_at', 'likes_count']
+        extra_kwargs = {'parent_comment': {'source': 'parent_comment_id'}}  # Для совместимости
 
     def get_likes_count(self, obj):
         return obj.comment_likes.count()
 
     def create(self, validated_data):
-        """
-        Когда мы вызываем serializer.save() во вью,
-        этот метод привяжет комментарий к request.user (если есть)
-        и потом вызовет super().create().
-        """
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             validated_data['user'] = request.user
         return super().create(validated_data)
 
     def validate(self, data):
-        """
-        Здесь мы берем entity_type и entity_id (пришедшие в self.initial_data),
-        мапим их на content_type и object_id, нужные модели Comment (GenericForeignKey).
-        """
+        content = data.get('content')
         entity_type = self.initial_data.get('entity_type')
         entity_id = self.initial_data.get('entity_id')
+        parent_comment_id = self.initial_data.get('parent_comment_id')
 
+        # Валидация текста
+        if not content or len(content.strip()) < 3:
+            raise serializers.ValidationError("Комментарий должен содержать минимум 3 символа.")
+
+        # Валидация entity_type и entity_id
         if not entity_type or not entity_id:
             raise serializers.ValidationError("Необходимо указать entity_type и entity_id.")
-
-        # Ищем ContentType по названию модели
         try:
             content_type = ContentType.objects.get(model=entity_type.lower())
         except ContentType.DoesNotExist:
             raise serializers.ValidationError("Некорректный entity_type.")
-
-        # Присваиваем нужные поля
         data['content_type'] = content_type
         data['object_id'] = entity_id
+
+        # Проверка родительского комментария
+        if parent_comment_id:
+            try:
+                parent_comment = Comment.objects.get(id=parent_comment_id, is_deleted=False)
+                if (parent_comment.content_type != content_type or 
+                    parent_comment.object_id != entity_id):
+                    raise serializers.ValidationError("Родительский комментарий не относится к этой сущности.")
+                data['parent_comment'] = parent_comment
+            except Comment.DoesNotExist:
+                raise serializers.ValidationError("Родительский комментарий не найден.")
 
         return data
 

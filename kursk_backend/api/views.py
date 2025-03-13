@@ -306,12 +306,16 @@ def user_detail(request, pk):
         return Response({'error': 'Пользователь не найден'}, status=404)
 
     if request.method == 'GET':
-        ser = UserSerializer(user_obj)
-        return Response(ser.data, status=200)
+        # Возвращаем только id, username, avatar
+        return Response({
+            'id': user_obj.id,
+            'username': user_obj.username,
+            'avatar': user_obj.avatar.url if user_obj.avatar else None
+        }, status=200)
 
     elif request.method == 'PUT':
         data = request.data.copy()
-        data['updated_at'] = str(timezone.now()) 
+        data['updated_at'] = str(timezone.now())
         ser = UserSerializer(user_obj, data=data, partial=True)
         if ser.is_valid():
             ser.save()
@@ -562,15 +566,18 @@ def get_messages_between(request, user1, user2):
 @permission_classes([IsAuthenticated])
 def delete_comment(request, comment_id):
     try:
-        comment = Comment.objects.get(pk=comment_id)
+        comment = Comment.objects.get(pk=comment_id, is_deleted=False)
     except Comment.DoesNotExist:
-        return Response({"detail": "Комментарий не найден"}, status=404)
+        return Response({"detail": "Комментарий не найден или уже удалён"}, status=404)
 
     if comment.user != request.user and not request.user.is_superuser:
-        return Response({"detail": "Нет прав"}, status=403)
+        return Response({"detail": "Нет прав на удаление"}, status=403)
 
-    comment.delete()  
-    return Response({"detail": "Комментарий удалён окончательно"}, status=204)
+    comment.is_deleted = True
+    comment.deleted_at = timezone.now()
+    comment.deleted_by = request.user.id
+    comment.save()
+    return Response({"detail": "Комментарий помечен как удалённый"}, status=204)
 
 
 @api_view(['GET'])
@@ -652,30 +659,35 @@ def approve_place(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_comment(request):
-    # Копируем данные, чтобы можно было ими манипулировать
     data = request.data.copy()
-    # Добавляем метку времени (если нужно)
     data['created_at'] = timezone.now()
 
-    # Создаем сериализатор, передавая данные и контекст
     serializer = CommentSerializer(data=data, context={'request': request})
     if serializer.is_valid():
-        com = serializer.save()  # Сохраняем комментарий
+        comment = serializer.save()
         return Response(
-            CommentSerializer(com).data,  # Возвращаем сериализованные данные нового коммента
+            CommentSerializer(comment).data,
             status=status.HTTP_201_CREATED,
             content_type="application/json"
         )
-    # Если не валидно, возвращаем ошибки
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.contenttypes.models import ContentType
+from .serializers import CommentSerializer
+class CommentPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 @api_view(['GET'])
+@permission_classes([IsAuthenticatedOrReadOnly])
 def list_comments(request):
     entity_type_param = request.GET.get('entity_type')
     entity_id_param = request.GET.get('entity_id')
 
-    qs = Comment.objects.all()
+    qs = Comment.objects.filter(is_deleted=False)  # Исключаем удаленные
     if entity_type_param:
         try:
             ct = ContentType.objects.get(model=entity_type_param.lower())
@@ -685,9 +697,14 @@ def list_comments(request):
     if entity_id_param:
         qs = qs.filter(object_id=entity_id_param)
 
-    qs = qs.order_by('created_at')
-    flat_comments = CommentSerializer(qs, many=True).data
+    qs = qs.order_by('-created_at')  # Сортировка: новые сверху
 
+    # Пагинация
+    paginator = CommentPagination()
+    paginated_qs = paginator.paginate_queryset(qs, request)
+
+    # Сериализация и формирование дерева
+    flat_comments = CommentSerializer(paginated_qs, many=True).data
     comment_dict = {}
     for comment in flat_comments:
         comment['children'] = []
@@ -695,7 +712,7 @@ def list_comments(request):
 
     root_comments = []
     for comment in flat_comments:
-        parent_id = comment.get('parent_comment_id')
+        parent_id = comment.get('parent_comment')  # Используем 'parent_comment' из сериализатора
         if parent_id:
             parent = comment_dict.get(parent_id)
             if parent:
@@ -703,26 +720,32 @@ def list_comments(request):
         else:
             root_comments.append(comment)
 
-    return Response(root_comments, status=200)
+    return paginator.get_paginated_response(root_comments)
 
-from django.shortcuts import get_object_or_404
 from .models import CommentLike
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def toggle_comment_like(request, comment_id):
-    comment = get_object_or_404(Comment, id=comment_id)
+    try:
+        comment = Comment.objects.get(id=comment_id, is_deleted=False)
+    except Comment.DoesNotExist:
+        return Response({"detail": "Комментарий не найден или удалён"}, status=404)
+
     existing_like = CommentLike.objects.filter(user=request.user, comment=comment).first()
     if existing_like:
         existing_like.delete()
         message = "Лайк снят"
+        liked = False
     else:
         CommentLike.objects.create(user=request.user, comment=comment)
         message = "Лайк поставлен"
+        liked = True
 
     current_likes = comment.comment_likes.count()
     return Response({
         "comment_id": comment_id,
         "message": message,
+        "liked": liked,
         "likes_count": current_likes
     }, status=200)
 
@@ -730,21 +753,20 @@ def toggle_comment_like(request, comment_id):
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def update_comment(request, comment_id):
-
     try:
         comment = Comment.objects.get(pk=comment_id, is_deleted=False)
     except Comment.DoesNotExist:
         return Response({"detail": "Комментарий не найден или удалён"}, status=404)
 
-    if comment.user != request.user and not request.user.is_superuser: 
+    if comment.user != request.user and not request.user.is_superuser:
         return Response({"detail": "У вас нет прав на редактирование этого комментария"}, status=403)
 
     new_content = request.data.get('content')
-    if not new_content:
-        return Response({"detail": "Отсутствует новое содержимое (content)"}, status=400)
+    if not new_content or len(new_content.strip()) < 3:
+        return Response({"detail": "Комментарий должен содержать минимум 3 символа"}, status=400)
 
     comment.content = new_content
-    comment.save(update_fields=['content']) 
+    comment.save(update_fields=['content'])
 
     ser = CommentSerializer(comment)
     return Response(ser.data, status=200)

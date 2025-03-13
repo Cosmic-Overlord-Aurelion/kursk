@@ -178,15 +178,21 @@ class Comment(models.Model):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, blank=True)
     object_id = models.PositiveIntegerField()
     entity = GenericForeignKey('content_type', 'object_id')
-    content = models.TextField()
-    parent_comment = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE)
+    content = models.TextField(max_length=5000)  # Ограничение до 5000 символов
+    parent_comment = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies')
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
-    deleted_by = models.IntegerField(null=True, blank=True)
+    deleted_by = models.ForeignKey('User', null=True, blank=True, on_delete=models.SET_NULL, related_name='deleted_comments')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'comments'
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),  # Для фильтрации по сущности
+            models.Index(fields=['parent_comment']),  # Для вложенности
+            models.Index(fields=['is_deleted']),  # Для фильтрации удалённых
+            models.Index(fields=['created_at']),  # Для сортировки
+        ]
 
     def __str__(self):
         return f"Comment by {self.user.username} on {self.content_type} #{self.object_id}"
@@ -233,12 +239,16 @@ class NewsLike(models.Model):
         return f"Like by {self.user.username} on {self.news.title}"
     
 class CommentLike(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name='comment_likes')
+    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    comment = models.ForeignKey('Comment', on_delete=models.CASCADE, related_name='comment_likes')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        db_table = 'comment_likes'  
         unique_together = ('user', 'comment')
+        indexes = [
+            models.Index(fields=['user', 'comment']),  
+        ]
 
     def __str__(self):
         return f"Like by {self.user.username} on comment #{self.comment.id}"
