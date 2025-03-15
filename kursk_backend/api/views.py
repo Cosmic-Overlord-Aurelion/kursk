@@ -681,13 +681,14 @@ class CommentPagination(PageNumberPagination):
     page_size_query_param = 'page_size'
     max_page_size = 100
 
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
 def list_comments(request):
     entity_type_param = request.GET.get('entity_type')
     entity_id_param = request.GET.get('entity_id')
 
-    qs = Comment.objects.filter(is_deleted=False)  # Исключаем удаленные
+    qs = Comment.objects.filter(is_deleted=False)  # Исключаем удалённые
     if entity_type_param:
         try:
             ct = ContentType.objects.get(model=entity_type_param.lower())
@@ -722,6 +723,33 @@ def list_comments(request):
 
     return paginator.get_paginated_response(root_comments)
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def get_latest_comment(request, news_id):
+    try:
+        # Получаем ContentType для модели News
+        ct = ContentType.objects.get(model='news')
+        
+        # Запрашиваем самый новый комментарий для новости
+        latest_comment = Comment.objects.filter(
+            content_type=ct,
+            object_id=news_id,
+            is_deleted=False
+        ).order_by('-created_at').first()
+
+        if not latest_comment:
+            return Response({"message": "Комментариев пока нет"}, status=200)
+
+        # Сериализуем только один комментарий
+        serializer = CommentSerializer(latest_comment)
+        return Response(serializer.data, status=200)
+
+    except ContentType.DoesNotExist:
+        return Response({"error": "Неверный тип сущности"}, status=400)
+    except Exception as e:
+        return Response({"error": str(e)}, status=400)
+    
 from .models import CommentLike
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

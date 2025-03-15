@@ -179,10 +179,22 @@ class Comment(models.Model):
     object_id = models.PositiveIntegerField()
     entity = GenericForeignKey('content_type', 'object_id')
     content = models.TextField(max_length=5000)  # Ограничение до 5000 символов
-    parent_comment = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='replies')
+    parent_comment = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='replies'
+    )
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
-    deleted_by = models.ForeignKey('User', null=True, blank=True, on_delete=models.SET_NULL, related_name='deleted_comments')
+    deleted_by = models.ForeignKey(
+        'User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='deleted_comments'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -196,6 +208,11 @@ class Comment(models.Model):
 
     def __str__(self):
         return f"Comment by {self.user.username} on {self.content_type} #{self.object_id}"
+
+    @property
+    def likes_count(self):
+        """Для совместимости с сериализатором и упрощения подсчёта лайков."""
+        return self.comment_likes.count()
 
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)

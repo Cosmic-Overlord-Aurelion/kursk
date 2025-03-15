@@ -94,19 +94,35 @@ from .serializers import UserSerializer
 class CommentSerializer(serializers.ModelSerializer):
     entity_id = serializers.IntegerField(write_only=True, source='object_id')
     entity_type = serializers.CharField(write_only=True)
-    parent_comment_id = serializers.IntegerField(write_only=True, required=False, allow_null=True, source='parent_comment')
+    parent_comment_id = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        source='parent_comment'
+    )
     user = UserSerializer(read_only=True)
     likes_count = serializers.SerializerMethodField()
+    children = serializers.SerializerMethodField()  # Добавляем вложенные комментарии
 
     class Meta:
         model = Comment
         fields = [
             'id', 'user', 'entity_id', 'entity_type', 'content',
-            'parent_comment_id', 'created_at', 'likes_count'
+            'parent_comment_id', 'created_at', 'likes_count', 'children'
         ]
 
     def get_likes_count(self, obj):
-        return obj.comment_likes.count()
+        return obj.likes_count  # Используем свойство модели
+
+    def get_children(self, obj):
+        """Рекурсивно сериализуем вложенные комментарии."""
+        if not obj.replies.exists():
+            return []
+        return CommentSerializer(
+            obj.replies.filter(is_deleted=False),
+            many=True,
+            context=self.context
+        ).data
 
     def validate(self, data):
         content = data.get('content')
@@ -130,8 +146,11 @@ class CommentSerializer(serializers.ModelSerializer):
         if parent_comment_id:
             try:
                 parent_comment = Comment.objects.get(id=parent_comment_id, is_deleted=False)
-                if (parent_comment.content_type != content_type or parent_comment.object_id != int(entity_id)):
-                    raise serializers.ValidationError("Родительский комментарий не относится к этой сущности.")
+                if (parent_comment.content_type != content_type or
+                    parent_comment.object_id != int(entity_id)):
+                    raise serializers.ValidationError(
+                        "Родительский комментарий не относится к этой сущности."
+                    )
                 data['parent_comment'] = parent_comment
             except Comment.DoesNotExist:
                 raise serializers.ValidationError("Родительский комментарий не найден.")
