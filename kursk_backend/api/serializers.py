@@ -102,17 +102,33 @@ class CommentSerializer(serializers.ModelSerializer):
     )
     user = UserSerializer(read_only=True)
     likes_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()  # Добавляем поле is_liked
+    user_avatar = serializers.SerializerMethodField()  # Добавляем поле user_avatar
     children = serializers.SerializerMethodField()  # Добавляем вложенные комментарии
 
     class Meta:
         model = Comment
         fields = [
             'id', 'user', 'entity_id', 'entity_type', 'content',
-            'parent_comment_id', 'created_at', 'likes_count', 'children'
+            'parent_comment_id', 'created_at', 'likes_count', 'is_liked',
+            'user_avatar', 'children'
         ]
 
     def get_likes_count(self, obj):
         return obj.likes_count  # Используем свойство модели
+
+    def get_is_liked(self, obj):
+        """Проверяем, лайкнул ли текущий пользователь комментарий."""
+        user = self.context['request'].user
+        if user.is_authenticated:
+            return obj.comment_likes.filter(user=user).exists()
+        return False
+
+    def get_user_avatar(self, obj):
+        """Возвращаем URL аватара пользователя, если он есть."""
+        if obj.user.avatar:
+            return self.context['request'].build_absolute_uri(obj.user.avatar.url)
+        return None
 
     def get_children(self, obj):
         """Рекурсивно сериализуем вложенные комментарии."""

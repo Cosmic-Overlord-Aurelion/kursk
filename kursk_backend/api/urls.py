@@ -14,13 +14,11 @@ from .views import (
 )
 
 urlpatterns = [
-    # Пользователи
     path('register/', register_user, name='register_user'),
     path('users/', list_users, name='list_users'),
     path('users/<int:pk>/', user_detail, name='user_detail'),
     path('users/<int:pk>/avatar/', update_user_avatar, name='update_user_avatar'),
 
-    # Новости
     path('news/', news_list, name='news_list'),
     path('news/create/', create_news, name='create_news'),
     path('news/<int:pk>/', news_detail, name='news_detail'),

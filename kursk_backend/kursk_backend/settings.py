@@ -23,9 +23,10 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "10.0.2.2"]
 
-# Application definition
+# Custom user model
 AUTH_USER_MODEL = 'api.User'
 
+# Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -50,7 +51,33 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# CORS settings
 CORS_ORIGIN_ALLOW_ALL = True
+CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+CORS_DEBUG = True  # Включаем отладку CORS
+CORS_ALLOW_CREDENTIALS = True  # Разрешаем отправку credentials (например, cookies)
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'api.authentication.CustomTokenAuthentication',  # Используем кастомный класс
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
 
 ROOT_URLCONF = 'kursk_backend.urls'
 
@@ -72,6 +99,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'kursk_backend.wsgi.application'
 
+# Database
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -79,6 +107,7 @@ DATABASES = {
     }
 }
 
+# Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -94,20 +123,60 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Internationalization
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
 
+# Static and media files
+STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-STATIC_URL = 'static/'
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s',
+            'datefmt': '%d/%b/%Y %H:%M:%S'
+        },
+        'simple': {
+            'format': '%(levelname)s %(message)s'
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'django.log',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'corsheaders': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',  # Устанавливаем уровень DEBUG для CORS
+            'propagate': False,
+        },
+        '': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+        },
+    },
+}
 
 # Email settings
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -118,14 +187,3 @@ EMAIL_HOST_PASSWORD = "qundmssnkzvpurqq"
 EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = 'dylanbob0@yandex.ru'
 SERVER_EMAIL = 'dylanbob0@yandex.ru'
-
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
-    ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
-}
-

@@ -159,34 +159,28 @@ def register_user(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_user(request):
+    print("DEBUG: login_user called")
+    print("DEBUG: Request headers:", dict(request.headers))
+    print("DEBUG: Request data:", request.data)
     email = request.data.get('email')
     password = request.data.get('password')
-
     if not email or not password:
-        return Response({'error': 'Не все поля заполнены'}, status=status.HTTP_400_BAD_REQUEST)
-
+        return Response({'error': 'Не все поля заполнены'}, status=400)
     try:
         user = User.objects.get(email=email)
+        if not user.is_email_confirmed:
+            return Response({'error': 'Email не подтверждён'}, status=403)
+        if check_password(password, user.password):
+            token, created = Token.objects.get_or_create(user=user)
+            print("DEBUG: Token for user", user.id, ":", token.key, "created:", created)
+            return Response({
+                'message': 'Успешный вход',
+                'user_id': user.id,
+                'token': token.key
+            }, status=200)
+        return Response({'error': 'Неверный пароль'}, status=400)
     except User.DoesNotExist:
-        return Response({'error': 'Нет такого пользователя'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not user.is_email_confirmed:
-        return Response({'error': 'Email не подтверждён'}, status=status.HTTP_403_FORBIDDEN)
-
-    # Проверяем пароль через стандартное поле password (хранится в зашифрованном виде)
-    if check_password(password, user.password):
-        # Для обеспечения уникальности токена удаляем старые
-        Token.objects.filter(user=user).delete()
-        token = Token.objects.create(user=user)
-        return Response({
-            'message': 'Успешный вход',
-            'user_id': user.id,
-            'token': token.key
-        }, status=status.HTTP_200_OK)
-
-    return Response({'error': 'Неверный пароль'}, status=status.HTTP_400_BAD_REQUEST)
-
-
+        return Response({'error': 'Нет такого пользователя'}, status=404)
 
 
 @api_view(['POST'])
@@ -297,16 +291,41 @@ def list_users(request):
     serializer = UserSerializer(users, many=True)
     return Response(serializer.data, status=200)
 
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes
+)
+from rest_framework.authentication import TokenAuthentication, SessionAuthentication
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.utils import timezone
+
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.contrib.auth import get_user_model
+from .serializers import UserSerializer
+from django.utils import timezone
+from api.authentication import CustomTokenAuthentication  # Импортируем кастомный класс
+
+User = get_user_model()
 
 @api_view(['GET', 'PUT', 'DELETE'])
+@authentication_classes([CustomTokenAuthentication, SessionAuthentication])  # Заменяем TokenAuthentication
+@permission_classes([IsAuthenticated])
 def user_detail(request, pk):
+    print("DEBUG: user_detail called with pk =", pk)
+    print("DEBUG: Request headers:", dict(request.headers))
+    print("DEBUG: Authenticated user:", request.user, "is_authenticated:", request.user.is_authenticated)
     try:
         user_obj = User.objects.get(pk=pk)
     except User.DoesNotExist:
         return Response({'error': 'Пользователь не найден'}, status=404)
 
     if request.method == 'GET':
-        # Возвращаем только id, username, avatar
+        print("DEBUG: Handling GET for /api/users/", pk)
         return Response({
             'id': user_obj.id,
             'username': user_obj.username,
@@ -314,6 +333,7 @@ def user_detail(request, pk):
         }, status=200)
 
     elif request.method == 'PUT':
+        print("DEBUG: Handling PUT for /api/users/", pk)
         data = request.data.copy()
         data['updated_at'] = str(timezone.now())
         ser = UserSerializer(user_obj, data=data, partial=True)
@@ -323,16 +343,15 @@ def user_detail(request, pk):
         return Response(ser.errors, status=400)
 
     elif request.method == 'DELETE':
+        print("DEBUG: Handling DELETE for /api/users/", pk)
         user_obj.delete()
         return Response({'message': 'Пользователь удалён'}, status=204)
-
-from django.db.models import Count, F, Value, FloatField, ExpressionWrapper, Case, When, Q
-from django.utils import timezone
 from .serializers import NewsListSerializer, NewsDetailSerializer
-
 
 @api_view(['GET'])
 def news_list(request):
+    print("DEBUG: news_list called")
+    print("DEBUG: Request headers:", dict(request.headers))
     qs = News.objects.prefetch_related('photos').all()
     sort_param = request.GET.get('sort')
     
@@ -367,6 +386,7 @@ def news_list(request):
         qs = qs.order_by('-created_at')
     
     ser = NewsListSerializer(qs, many=True)
+    print("DEBUG: news_list response data:", ser.data)
     return Response(ser.data, status=200)
 
 
@@ -689,6 +709,9 @@ def list_comments(request):
     entity_id_param = request.GET.get('entity_id')
 
     qs = Comment.objects.filter(is_deleted=False)  # Исключаем удалённые
+    qs = qs.select_related('user')  # Предзагрузка данных пользователя
+    qs = qs.prefetch_related('comment_likes', 'replies')  # Предзагрузка лайков и ответов
+
     if entity_type_param:
         try:
             ct = ContentType.objects.get(model=entity_type_param.lower())
@@ -705,7 +728,7 @@ def list_comments(request):
     paginated_qs = paginator.paginate_queryset(qs, request)
 
     # Сериализация и формирование дерева
-    flat_comments = CommentSerializer(paginated_qs, many=True).data
+    flat_comments = CommentSerializer(paginated_qs, many=True, context={'request': request}).data
     comment_dict = {}
     for comment in flat_comments:
         comment['children'] = []
@@ -723,28 +746,27 @@ def list_comments(request):
 
     return paginator.get_paginated_response(root_comments)
 
+import logging
+logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
 def get_latest_comment(request, news_id):
     try:
-        # Получаем ContentType для модели News
+        news = News.objects.get(pk=news_id)
+    except News.DoesNotExist:
+        return Response({"error": "Новость не найдена"}, status=404)
+    try:
         ct = ContentType.objects.get(model='news')
-        
-        # Запрашиваем самый новый комментарий для новости
-        latest_comment = Comment.objects.filter(
+        comments = Comment.objects.filter(
             content_type=ct,
             object_id=news_id,
             is_deleted=False
-        ).order_by('-created_at').first()
-
-        if not latest_comment:
+        ).order_by('-created_at')
+        if not comments.exists():
             return Response({"message": "Комментариев пока нет"}, status=200)
-
-        # Сериализуем только один комментарий
-        serializer = CommentSerializer(latest_comment)
+        serializer = CommentSerializer(comments, many=True, context={'request': request})
         return Response(serializer.data, status=200)
-
     except ContentType.DoesNotExist:
         return Response({"error": "Неверный тип сущности"}, status=400)
     except Exception as e:
