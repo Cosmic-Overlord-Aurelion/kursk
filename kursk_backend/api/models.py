@@ -92,11 +92,19 @@ class News(models.Model):
     author = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     views_count = models.PositiveIntegerField(default=0)
-    likes = models.PositiveIntegerField(default=0)
-    comments = GenericRelation('Comment')  
+    likes = models.ManyToManyField(
+        User,
+        related_name='liked_news',  
+        blank=True 
+    )
+    comments = GenericRelation('Comment')
 
     def __str__(self):
         return self.title
+
+    @property
+    def likes_count(self):
+        return self.likes.count()
 
 class NewsPhoto(models.Model):
     id = models.AutoField(primary_key=True)

@@ -16,10 +16,14 @@ class NewsPhotoInline(admin.TabularInline):
 @admin.register(News)
 class NewsAdmin(admin.ModelAdmin):
     inlines = [NewsPhotoInline]
-    list_display = ('id', 'title', 'subheader', 'created_at', 'views_count', 'likes')
+    # Заменяем 'likes' на 'likes_count'
+    list_display = ('id', 'title', 'subheader', 'created_at', 'views_count', 'likes_count')
     search_fields = ('title', 'subheader', 'full_text')
     ordering = ('-created_at',)
 
+    def likes_count(self, obj):
+        return obj.likes.count()
+    likes_count.short_description = 'Лайки'
 
 @admin.register(NewsPhoto)
 class NewsPhotoAdmin(admin.ModelAdmin):

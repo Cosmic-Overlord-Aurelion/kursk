@@ -35,7 +35,9 @@ class NewsPhotoSerializer(serializers.ModelSerializer):
         fields = ('id', 'photo', 'uploaded_at')
 
 class NewsDetailSerializer(serializers.ModelSerializer):
-    photos = NewsPhotoSerializer(many=True, read_only=True)  # если у модели настроено related_name="photos"
+    photos = NewsPhotoSerializer(many=True, read_only=True)
+    is_liked = serializers.SerializerMethodField()
+    likes = serializers.SerializerMethodField()  
 
     class Meta:
         model = News
@@ -48,23 +50,47 @@ class NewsDetailSerializer(serializers.ModelSerializer):
             'created_at',
             'views_count',
             'likes',
-            'photos'
+            'photos',
+            'is_liked'
         )
+
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.likes.filter(id=request.user.id).exists()
+        return False
+
+    def get_likes(self, obj):
+        return obj.likes.count()
 
 class NewsListSerializer(serializers.ModelSerializer):
     photos = NewsPhotoSerializer(many=True, read_only=True)
+    likes = serializers.SerializerMethodField()  # добавляем поле для подсчёта лайков
 
     class Meta:
         model = News
         fields = ['id', 'title', 'subheader', 'views_count', 'likes', 'photos']
 
+    def get_likes(self, obj):
+        return obj.likes.count()
 
 class NewsSerializer(serializers.ModelSerializer):
     photos = NewsPhotoSerializer(many=True, read_only=True)
+    is_liked = serializers.SerializerMethodField()
+    likes = serializers.SerializerMethodField()
 
     class Meta:
         model = News
-        fields = ['id', 'title', 'subheader', 'full_text', 'views_count', 'likes', 'photos']
+        fields = ['id', 'title', 'subheader', 'full_text', 'views_count', 'likes', 'photos', 'is_liked']
+
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.likes.filter(id=request.user.id).exists()
+        return False
+
+    def get_likes(self, obj):
+        return obj.likes.count()
 
 class EventSerializer(serializers.ModelSerializer):
     class Meta:

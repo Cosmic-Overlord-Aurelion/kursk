@@ -216,18 +216,23 @@ def add_like(request, pk):
 
     user = request.user
 
-    like, created = NewsLike.objects.get_or_create(news=news_obj, user=user)
+    if news_obj.likes.filter(id=user.id).exists():
 
-    if not created:
-        like.delete()
+        news_obj.likes.remove(user)
         message = 'Лайк удалён'
+        is_liked = False
     else:
+        news_obj.likes.add(user)
         message = 'Лайк добавлен'
+        is_liked = True
 
-    news_obj.likes = NewsLike.objects.filter(news=news_obj).count()
-    news_obj.save()
+    likes_count = news_obj.likes.count()
 
-    return Response({'message': message, 'likes': news_obj.likes}, status=200)
+    return Response({
+        'message': message,
+        'likes': likes_count,
+        'is_liked': is_liked
+    }, status=200)
 
 @api_view(['POST'])
 def add_view(request, pk):
