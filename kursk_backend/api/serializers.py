@@ -57,7 +57,7 @@ class NewsDetailSerializer(serializers.ModelSerializer):
     def get_is_liked(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return obj.likes.filter(id=request.user.id).exists()
+            return obj.comment_likes.filter(user=request.user).exists()
         return False
 
     def get_likes(self, obj):

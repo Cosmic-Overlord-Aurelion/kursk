@@ -691,7 +691,7 @@ def create_comment(request):
     if serializer.is_valid():
         comment = serializer.save()
         return Response(
-            CommentSerializer(comment).data,
+            CommentSerializer(comment, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
             content_type="application/json"
         )
