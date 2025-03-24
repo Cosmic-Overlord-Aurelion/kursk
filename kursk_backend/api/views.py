@@ -587,22 +587,42 @@ def get_messages_between(request, user1, user2):
     ser = MessageSerializer(qs, many=True)
     return Response(ser.data, status=200)
 
+import logging
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from .models import Comment
+
+# Настраиваем логирование
+logger = logging.getLogger(__name__)
+
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_comment(request, comment_id):
+    logger.debug(f"Received delete_comment request for comment_id={comment_id}, user={request.user}")
+    
     try:
-        comment = Comment.objects.get(pk=comment_id, is_deleted=False)
+        comment = Comment.objects.get(pk=comment_id)
     except Comment.DoesNotExist:
-        return Response({"detail": "Комментарий не найден или уже удалён"}, status=404)
+        logger.warning(f"Comment with id={comment_id} does not exist in the database")
+        return Response({"detail": "Комментарий не найден"}, status=404)
+
+    if comment.is_deleted:
+        logger.debug(f"Comment with id={comment_id} is already deleted (is_deleted=True)")
+        return Response(status=204)  # Убираем тело ответа
 
     if comment.user != request.user and not request.user.is_superuser:
+        logger.warning(f"User {request.user} does not have permission to delete comment {comment_id}")
         return Response({"detail": "Нет прав на удаление"}, status=403)
 
     comment.is_deleted = True
     comment.deleted_at = timezone.now()
-    comment.deleted_by = request.user.id
-    comment.save()
-    return Response({"detail": "Комментарий помечен как удалённый"}, status=204)
+    comment.deleted_by = request.user
+    comment.save(update_fields=['is_deleted', 'deleted_at', 'deleted_by'])
+    logger.debug(f"Comment {comment_id} marked as deleted by user {request.user}")
+
+    return Response(status=204)
 
 
 @api_view(['GET'])
@@ -701,11 +721,15 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.pagination import PageNumberPagination
 from django.contrib.contenttypes.models import ContentType
 from .serializers import CommentSerializer
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.pagination import PageNumberPagination
+from django.contrib.contenttypes.models import ContentType
+from .serializers import CommentSerializer
+
 class CommentPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
-
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
@@ -713,9 +737,8 @@ def list_comments(request):
     entity_type_param = request.GET.get('entity_type')
     entity_id_param = request.GET.get('entity_id')
 
-    qs = Comment.objects.filter(is_deleted=False)  # Исключаем удалённые
-    qs = qs.select_related('user')  # Предзагрузка данных пользователя
-    qs = qs.prefetch_related('comment_likes', 'replies')  # Предзагрузка лайков и ответов
+    qs = Comment.objects.filter(is_deleted=False)
+    qs = qs.select_related('user').prefetch_related('comment_likes', 'replies')
 
     if entity_type_param:
         try:
@@ -726,30 +749,16 @@ def list_comments(request):
     if entity_id_param:
         qs = qs.filter(object_id=entity_id_param)
 
-    qs = qs.order_by('-created_at')  # Сортировка: новые сверху
+    # Фильтруем только корневые комментарии
+    qs = qs.filter(parent_comment_id__isnull=True).order_by('-created_at')
 
     # Пагинация
     paginator = CommentPagination()
     paginated_qs = paginator.paginate_queryset(qs, request)
 
-    # Сериализация и формирование дерева
-    flat_comments = CommentSerializer(paginated_qs, many=True, context={'request': request}).data
-    comment_dict = {}
-    for comment in flat_comments:
-        comment['children'] = []
-        comment_dict[comment['id']] = comment
-
-    root_comments = []
-    for comment in flat_comments:
-        parent_id = comment.get('parent_comment')  # Используем 'parent_comment' из сериализатора
-        if parent_id:
-            parent = comment_dict.get(parent_id)
-            if parent:
-                parent['children'].append(comment)
-        else:
-            root_comments.append(comment)
-
-    return paginator.get_paginated_response(root_comments)
+    # Сериализация с учетом вложенности через CommentSerializer
+    serializer = CommentSerializer(paginated_qs, many=True, context={'request': request})
+    return paginator.get_paginated_response(serializer.data)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -805,25 +814,34 @@ def toggle_comment_like(request, comment_id):
     }, status=200)
 
 
+logger = logging.getLogger(__name__)
+
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def update_comment(request, comment_id):
+    logger.debug(f"Received update_comment request for comment_id={comment_id}, user={request.user}")
     try:
         comment = Comment.objects.get(pk=comment_id, is_deleted=False)
     except Comment.DoesNotExist:
+        logger.warning(f"Comment with id={comment_id} not found or deleted")
         return Response({"detail": "Комментарий не найден или удалён"}, status=404)
 
     if comment.user != request.user and not request.user.is_superuser:
+        logger.warning(f"User {request.user} does not have permission to edit comment {comment_id}")
         return Response({"detail": "У вас нет прав на редактирование этого комментария"}, status=403)
 
     new_content = request.data.get('content')
     if not new_content or len(new_content.strip()) < 3:
+        logger.warning(f"Invalid content provided: {new_content}")
         return Response({"detail": "Комментарий должен содержать минимум 3 символа"}, status=400)
 
     comment.content = new_content
     comment.save(update_fields=['content'])
+    logger.debug(f"Comment {comment_id} updated with new content: {new_content}")
 
-    ser = CommentSerializer(comment)
+    # Передаём контекст с request в сериализатор
+    ser = CommentSerializer(comment, context={'request': request})
+    logger.debug(f"Serialized comment data: {ser.data}")
     return Response(ser.data, status=200)
 
 @api_view(['GET'])
