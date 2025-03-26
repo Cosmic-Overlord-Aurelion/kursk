@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.core.mail import send_mail
+from django.conf import settings
 from .models import (
     User, Friendship, Message, News, NewsPhoto,
     Event, EventRegistration,
@@ -6,6 +8,7 @@ from .models import (
     Comment
 )
 
+# Inline для загрузки нескольких фото к новости
 class NewsPhotoInline(admin.TabularInline):
     """
     Позволяет загружать сразу несколько фото к новости в админке.
@@ -16,7 +19,6 @@ class NewsPhotoInline(admin.TabularInline):
 @admin.register(News)
 class NewsAdmin(admin.ModelAdmin):
     inlines = [NewsPhotoInline]
-    # Заменяем 'likes' на 'likes_count'
     list_display = ('id', 'title', 'subheader', 'created_at', 'views_count', 'likes_count')
     search_fields = ('title', 'subheader', 'full_text')
     ordering = ('-created_at',)
@@ -34,7 +36,6 @@ class NewsPhotoAdmin(admin.ModelAdmin):
 class CommentAdmin(admin.ModelAdmin):
     """
     Админка для комментариев.
-    list_display и search_fields можно настроить под свои нужды.
     """
     list_display = (
         'id', 'user', 'get_content_type', 'object_id',
@@ -51,10 +52,52 @@ class CommentAdmin(admin.ModelAdmin):
         return obj.parent_comment.id if obj.parent_comment else None
     get_parent_comment_id.short_description = "Parent Comment ID"
 
+# Регистрируем модели без кастомизации
 admin.site.register(User)
 admin.site.register(Friendship)
 admin.site.register(Message)
-admin.site.register(Event)
-admin.site.register(EventRegistration)
 admin.site.register(Place)
 admin.site.register(PlaceRating)
+
+# Кастомные действия для модели Event
+def approve_events(modeladmin, request, queryset):
+    for event in queryset:
+        if event.status != 'approved':
+            event.status = 'approved'
+            event.save()
+            # Отправка email уведомления об одобрении
+            send_mail(
+                subject="Мероприятие одобрено",
+                message=f"Поздравляем! Ваше мероприятие '{event.title}' было одобрено.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[event.organizer.email],
+                fail_silently=True,
+            )
+    modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
+approve_events.short_description = "Одобрить выбранные мероприятия"
+
+def reject_events(modeladmin, request, queryset):
+    for event in queryset:
+        if event.status != 'rejected':
+            event.status = 'rejected'
+            event.save()
+            # Отправка email уведомления об отклонении
+            send_mail(
+                subject="Мероприятие отклонено",
+                message=f"К сожалению, ваше мероприятие '{event.title}' было отклонено.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[event.organizer.email],
+                fail_silently=True,
+            )
+    modeladmin.message_user(request, "Выбранные мероприятия были отклонены.")
+reject_events.short_description = "Отклонить выбранные мероприятия"
+
+class EventAdmin(admin.ModelAdmin):
+    list_display = ('title', 'organizer', 'status', 'created_at')
+    list_filter = ('status', 'created_at')
+    actions = [approve_events, reject_events]
+
+admin.site.register(Event, EventAdmin)
+
+# Регистрируем EventRegistration (уже с заданным related_name в модели)
+admin.site.register(EventRegistration)

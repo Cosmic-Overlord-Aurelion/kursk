@@ -128,18 +128,21 @@ class Event(models.Model):
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
     image = models.ImageField(upload_to='events/', null=True, blank=True)
-
-    class Meta:
-        db_table = 'events'
-
+    
+    status = models.CharField(max_length=20, default="pending") 
+    address = models.CharField(max_length=255, null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    
     def __str__(self):
         return f"Event: {self.title}"
 
+
 class EventRegistration(models.Model):
     id = models.AutoField(primary_key=True)
-    event = models.ForeignKey('Event', on_delete=models.CASCADE)
+    event = models.ForeignKey('Event', on_delete=models.CASCADE, related_name='registrations')
     user = models.ForeignKey('User', on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, default='going')  
+    status = models.CharField(max_length=20, default='going')
     registered_at = models.DateTimeField()
 
     class Meta:
@@ -169,7 +172,7 @@ class PlaceRating(models.Model):
     id = models.AutoField(primary_key=True)
     place = models.ForeignKey('Place', on_delete=models.CASCADE)
     user = models.ForeignKey('User', on_delete=models.CASCADE)
-    rating = models.IntegerField()  # 1..5
+    rating = models.IntegerField()
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
 

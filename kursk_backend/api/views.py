@@ -625,23 +625,52 @@ def delete_comment(request, comment_id):
     return Response(status=204)
 
 
+from datetime import timedelta
+from django.utils import timezone
+from django.db.models import Count
+
 @api_view(['GET'])
 def list_events(request):
-    qs = Event.objects.all().order_by('-created_at')
-    ser = EventSerializer(qs, many=True)
-    return Response(ser.data, status=200)
+    filter_param = request.GET.get('filter')
+    # Показываем только одобренные мероприятия
+    qs = Event.objects.filter(status="approved")
+    now = timezone.now()
+
+    if filter_param == "popular":
+        # Аннотируем количество регистраций и сортируем по убыванию
+        qs = qs.annotate(registrations_count=Count('eventregistration_set')).order_by('-registrations_count')
+    elif filter_param == "upcoming":
+        # Мероприятия, заканчивающиеся через 1–3 недели
+        qs = qs.filter(
+            end_datetime__gte=now + timedelta(weeks=1),
+            end_datetime__lte=now + timedelta(weeks=3)
+        ).order_by('end_datetime')
+    elif filter_param == "planned":
+        # Мероприятия, заканчивающиеся через 3–10 недель
+        qs = qs.filter(
+            end_datetime__gte=now + timedelta(weeks=3),
+            end_datetime__lte=now + timedelta(weeks=10)
+        ).order_by('end_datetime')
+    else:
+        qs = qs.order_by('-created_at')
+    
+    serializer = EventSerializer(qs, many=True)
+    return Response(serializer.data, status=200)
+
 
 
 @api_view(['POST'])
 def create_event(request):
     data = request.data.copy()
     data['created_at'] = str(timezone.now())
+    data['status'] = 'pending'  
+    
+    serializer = EventSerializer(data=data)
+    if serializer.is_valid():
+        event = serializer.save()
+        return Response(EventSerializer(event).data, status=201)
+    return Response(serializer.errors, status=400)
 
-    s = EventSerializer(data=data)
-    if s.is_valid():
-        ev = s.save()
-        return Response(EventSerializer(ev).data, status=201)
-    return Response(s.errors, status=400)
 
 
 @api_view(['POST'])
@@ -957,6 +986,19 @@ def send_reset_email(email, username, reset_code):
     except Exception as e:
         logger.error(f"Ошибка при отправке reset email: {e}")
 
-
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_event(request, pk):
+    try:
+        event = Event.objects.get(pk=pk)
+    except Event.DoesNotExist:
+        return Response({'error': 'Мероприятие не найдено'}, status=404)
+    
+    # Проверяем, что запрашивающий пользователь является организатором
+    if event.organizer != request.user:
+        return Response({'error': 'Вы не можете удалить это мероприятие'}, status=403)
+    
+    event.delete()
+    return Response({'message': 'Мероприятие удалено'}, status=204)
 
 

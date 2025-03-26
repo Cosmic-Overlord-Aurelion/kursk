@@ -97,6 +97,7 @@ class EventSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
         fields = '__all__'
+        read_only_fields = ('created_at', 'status', 'views_count')
 
 class EventRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -123,58 +124,50 @@ logger = logging.getLogger(__name__)
 class CommentSerializer(serializers.ModelSerializer):
     entity_id = serializers.IntegerField(write_only=True, source='object_id')
     entity_type = serializers.CharField(write_only=True)
-    parent_comment_id = serializers.IntegerField(
-        write_only=True,
+    parent_comment_id = serializers.PrimaryKeyRelatedField(
+        queryset=Comment.objects.filter(is_deleted=False),
         required=False,
         allow_null=True,
         source='parent_comment'
     )
     user = UserSerializer(read_only=True)
     likes_count = serializers.SerializerMethodField()
-    is_liked = serializers.SerializerMethodField()  # Добавляем поле is_liked
-    user_avatar = serializers.SerializerMethodField()  # Добавляем поле user_avatar
-    children = serializers.SerializerMethodField()  # Добавляем вложенные комментарии
+    is_liked = serializers.SerializerMethodField()  # Проверка лайка текущим пользователем
+    user_avatar = serializers.SerializerMethodField()  # URL аватара пользователя
+    children = serializers.SerializerMethodField()  # Вложенные комментарии
+    reply_to = serializers.SerializerMethodField()    # Никнейм родительского комментария
 
     class Meta:
         model = Comment
         fields = [
             'id', 'user', 'entity_id', 'entity_type', 'content',
             'parent_comment_id', 'created_at', 'likes_count', 'is_liked',
-            'user_avatar', 'children'
+            'user_avatar', 'children', 'reply_to'
         ]
 
     def get_likes_count(self, obj):
         return obj.likes_count  # Используем свойство модели
 
     def get_is_liked(self, obj):
-        """Проверяем, лайкнул ли текущий пользователь комментарий."""
         logger.debug(f"get_is_liked called for comment {obj.id}, context: {self.context}")
-        if 'request' not in self.context:
-            logger.warning(f"Request not found in context for comment {obj.id}")
-            return False
-        user = self.context['request'].user
-        if user.is_authenticated:
-            is_liked = obj.comment_likes.filter(user=user).exists()
-            logger.debug(f"Comment {obj.id} is_liked by user {user}: {is_liked}")
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            is_liked = obj.comment_likes.filter(user=request.user).exists()
+            logger.debug(f"Comment {obj.id} is_liked by user {request.user}: {is_liked}")
             return is_liked
         logger.debug(f"User not authenticated for comment {obj.id}")
         return False
 
     def get_user_avatar(self, obj):
-        """Возвращаем URL аватара пользователя, если он есть."""
         logger.debug(f"get_user_avatar called for comment {obj.id}, user {obj.user}")
-        if 'request' not in self.context:
-            logger.warning(f"Request not found in context for comment {obj.id}")
-            return None
-        if obj.user.avatar:
-            avatar_url = self.context['request'].build_absolute_uri(obj.user.avatar.url)
+        request = self.context.get('request')
+        if request and obj.user.avatar:
+            avatar_url = request.build_absolute_uri(obj.user.avatar.url)
             logger.debug(f"Avatar URL for user {obj.user}: {avatar_url}")
             return avatar_url
-        logger.debug(f"No avatar for user {obj.user}")
         return None
 
     def get_children(self, obj):
-        """Рекурсивно сериализуем вложенные комментарии."""
         logger.debug(f"get_children called for comment {obj.id}")
         if not obj.replies.exists():
             logger.debug(f"No replies for comment {obj.id}")
@@ -186,6 +179,19 @@ class CommentSerializer(serializers.ModelSerializer):
         ).data
         logger.debug(f"Children for comment {obj.id}: {children}")
         return children
+
+    def get_reply_to(self, obj):
+        if obj.parent_comment:
+            if obj.parent_comment.user:
+                username = obj.parent_comment.user.username
+                logger.debug(f"Comment {obj.id} reply_to user: {username}")
+                return username
+            else:
+                logger.debug(f"Comment {obj.id} parent_comment.user is None")
+                return None
+        else:
+            logger.debug(f"Comment {obj.id} has no parent_comment")
+            return None
 
     def validate(self, data):
         logger.debug(f"Validating data: {data}")
@@ -199,13 +205,13 @@ class CommentSerializer(serializers.ModelSerializer):
         parent_comment_id = self.initial_data.get('parent_comment_id')
 
         if not entity_type or not entity_id:
-            logger.warning("Validation failed: entity_type or entity_id missing")
+            logger.warning("Validation failed: entity_type или entity_id отсутствуют")
             raise serializers.ValidationError("Необходимо указать entity_type и entity_id.")
 
         try:
             content_type = ContentType.objects.get(model=entity_type.lower())
         except ContentType.DoesNotExist:
-            logger.warning(f"Validation failed: invalid entity_type: {entity_type}")
+            logger.warning(f"Validation failed: некорректный entity_type: {entity_type}")
             raise serializers.ValidationError("Некорректный entity_type.")
 
         data['content_type'] = content_type
@@ -215,13 +221,11 @@ class CommentSerializer(serializers.ModelSerializer):
                 parent_comment = Comment.objects.get(id=parent_comment_id, is_deleted=False)
                 if (parent_comment.content_type != content_type or
                     parent_comment.object_id != int(entity_id)):
-                    logger.warning(f"Validation failed: parent comment {parent_comment_id} does not match entity")
-                    raise serializers.ValidationError(
-                        "Родительский комментарий не относится к этой сущности."
-                    )
+                    logger.warning(f"Validation failed: родительский комментарий {parent_comment_id} не относится к этой сущности")
+                    raise serializers.ValidationError("Родительский комментарий не относится к этой сущности.")
                 data['parent_comment'] = parent_comment
             except Comment.DoesNotExist:
-                logger.warning(f"Validation failed: parent comment {parent_comment_id} not found")
+                logger.warning(f"Validation failed: родительский комментарий {parent_comment_id} не найден")
                 raise serializers.ValidationError("Родительский комментарий не найден.")
 
         logger.debug(f"Validation passed, data: {data}")
