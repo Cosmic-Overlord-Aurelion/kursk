@@ -292,3 +292,13 @@ class CommentLike(models.Model):
     def __str__(self):
         return f"Like by {self.user.username} on comment #{self.comment.id}"
 
+class EventView(models.Model):
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="viewed_users")
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    viewed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('event', 'user')  # Только один просмотр от одного юзера
+
+    def __str__(self):
+        return f"{self.user.username} viewed {self.event.title}"

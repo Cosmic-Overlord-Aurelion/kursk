@@ -1010,6 +1010,8 @@ def delete_event(request, pk):
     return Response({'message': 'Мероприятие удалено'}, status=204)
 
 from .serializers import EventDetailSerializer, EventPhoto, EventPhotoSerializer
+from .models import EventView  # не забудь импорт
+
 @api_view(['GET'])
 def event_detail(request, pk):
     try:
@@ -1017,16 +1019,18 @@ def event_detail(request, pk):
     except Event.DoesNotExist:
         return Response({'error': 'Событие не найдено'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Показываем только одобренные события:
     if event.status != 'approved':
         return Response({'error': 'Событие не одобрено'}, status=status.HTTP_403_FORBIDDEN)
 
-    # По желанию: увеличиваем счётчик просмотров
-    event.views_count = F('views_count') + 1
-    event.save(update_fields=['views_count'])
-    event.refresh_from_db()
 
-    # Сериализация и возврат
+    if request.user.is_authenticated:
+        already_viewed = EventView.objects.filter(event=event, user=request.user).exists()
+        if not already_viewed:
+            EventView.objects.create(event=event, user=request.user)
+            event.views_count = F('views_count') + 1
+            event.save(update_fields=['views_count'])
+            event.refresh_from_db()
+
     serializer = EventDetailSerializer(event, context={'request': request})
     return Response(serializer.data, status=status.HTTP_200_OK)
 

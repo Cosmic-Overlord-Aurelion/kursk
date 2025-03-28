@@ -110,6 +110,8 @@ class EventPhotoSerializer(serializers.ModelSerializer):
         model = EventPhoto
         fields = ['id', 'photo', 'uploaded_at']
 
+
+
 class EventDetailSerializer(serializers.ModelSerializer):
     organizer = UserSerializer(read_only=True) 
     registrations_count = serializers.SerializerMethodField()
