@@ -121,6 +121,9 @@ class NewsPhoto(models.Model):
 class Event(models.Model):
     id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=255)
+    # Новое поле:
+    subheader = models.CharField(max_length=500, blank=True, null=True)
+
     description = models.TextField(null=True, blank=True)
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
@@ -133,9 +136,17 @@ class Event(models.Model):
     address = models.CharField(max_length=255, null=True, blank=True)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
-    
+
     def __str__(self):
         return f"Event: {self.title}"
+
+class EventPhoto(models.Model):
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='photos')
+    photo = models.ImageField(upload_to='events/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"EventPhoto #{self.id} for {self.event.title}"
 
 
 class EventRegistration(models.Model):

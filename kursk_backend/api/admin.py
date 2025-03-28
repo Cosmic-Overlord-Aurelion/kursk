@@ -1,14 +1,14 @@
 from django.contrib import admin
 from django.core.mail import send_mail
 from django.conf import settings
+
 from .models import (
     User, Friendship, Message, News, NewsPhoto,
-    Event, EventRegistration,
-    Place, PlaceRating,
-    Comment
+    Event, EventRegistration, EventPhoto,  # <-- Убедитесь, что импортируете EventPhoto
+    Place, PlaceRating, Comment
 )
 
-# Inline для загрузки нескольких фото к новости
+# Inline для загрузки нескольких фото к новости (у вас уже есть)
 class NewsPhotoInline(admin.TabularInline):
     """
     Позволяет загружать сразу несколько фото к новости в админке.
@@ -27,10 +27,12 @@ class NewsAdmin(admin.ModelAdmin):
         return obj.likes.count()
     likes_count.short_description = 'Лайки'
 
+
 @admin.register(NewsPhoto)
 class NewsPhotoAdmin(admin.ModelAdmin):
     list_display = ('id', 'news', 'uploaded_at')
     search_fields = ('news__title',)
+
 
 @admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
@@ -51,6 +53,7 @@ class CommentAdmin(admin.ModelAdmin):
     def get_parent_comment_id(self, obj):
         return obj.parent_comment.id if obj.parent_comment else None
     get_parent_comment_id.short_description = "Parent Comment ID"
+
 
 # Регистрируем модели без кастомизации
 admin.site.register(User)
@@ -76,12 +79,13 @@ def approve_events(modeladmin, request, queryset):
     modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
 approve_events.short_description = "Одобрить выбранные мероприятия"
 
+
 def reject_events(modeladmin, request, queryset):
     for event in queryset:
         if event.status != 'rejected':
             event.status = 'rejected'
             event.save()
-            # Отправка email уведомления об отклонении
+            # Отправка email уведомления об отказе
             send_mail(
                 subject="Мероприятие отклонено",
                 message=f"К сожалению, ваше мероприятие '{event.title}' было отклонено.",
@@ -92,12 +96,23 @@ def reject_events(modeladmin, request, queryset):
     modeladmin.message_user(request, "Выбранные мероприятия были отклонены.")
 reject_events.short_description = "Отклонить выбранные мероприятия"
 
+
+# Inline для загрузки нескольких фото к событию
+class EventPhotoInline(admin.TabularInline):
+    """
+    Позволяет загружать сразу несколько фото к событию в админке.
+    """
+    model = EventPhoto
+    extra = 5
+
+
 class EventAdmin(admin.ModelAdmin):
     list_display = ('title', 'organizer', 'status', 'created_at')
     list_filter = ('status', 'created_at')
     actions = [approve_events, reject_events]
+    inlines = [EventPhotoInline]  
+
 
 admin.site.register(Event, EventAdmin)
 
-# Регистрируем EventRegistration (уже с заданным related_name в модели)
 admin.site.register(EventRegistration)

@@ -10,7 +10,7 @@ from .views import (
     list_user_activity, add_user_activity, verify_email, login_user,
     request_password_reset, confirm_password_reset, check_user_exists,
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
-    get_latest_comment, 
+    get_latest_comment, event_detail, add_event_photos
 )
 
 urlpatterns = [
@@ -42,7 +42,8 @@ urlpatterns = [
     path('events/', list_events, name='list_events'),
     path('events/create/', create_event, name='create_event'),
     path('events/register/', register_for_event, name='register_for_event'),
-
+    path('events/<int:pk>/', event_detail, name='event_detail'),
+    path('events/<int:pk>/photos/add/', add_event_photos, name='add_event_photos'),
     # Места
     path('places/', list_places, name='list_places'),
     path('places/create/', create_place, name='create_place'),

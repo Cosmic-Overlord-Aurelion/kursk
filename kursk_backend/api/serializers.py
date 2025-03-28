@@ -7,7 +7,7 @@ from .models import (
     Place, PlaceRating,
     Comment,
     Notification,         
-    UserActivity         
+    UserActivity, EventPhoto        
 )
 
 class UserSerializer(serializers.ModelSerializer):
@@ -99,10 +99,42 @@ class EventSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('created_at', 'status', 'views_count')
 
+
 class EventRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventRegistration
         fields = '__all__'
+
+class EventPhotoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EventPhoto
+        fields = ['id', 'photo', 'uploaded_at']
+
+class EventDetailSerializer(serializers.ModelSerializer):
+    organizer = UserSerializer(read_only=True) 
+    registrations_count = serializers.SerializerMethodField()
+    is_registered = serializers.SerializerMethodField()
+    photos = EventPhotoSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Event
+        fields = [
+            'id', 'title', 'subheader', 'description', 
+            'start_datetime', 'end_datetime', 'organizer',
+            'views_count', 'created_at', 'image', 'status',
+            'address', 'latitude', 'longitude',
+            'registrations_count', 'is_registered',
+            'photos'
+        ]
+
+    def get_registrations_count(self, obj):
+        return obj.registrations.count()
+
+    def get_is_registered(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.registrations.filter(user=request.user).exists()
+        return False
 
 class PlaceSerializer(serializers.ModelSerializer):
     class Meta:

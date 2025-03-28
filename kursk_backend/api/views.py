@@ -629,33 +629,41 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Count
 
+logger = logging.getLogger(__name__)
+
 @api_view(['GET'])
 def list_events(request):
     filter_param = request.GET.get('filter')
+    now = timezone.now()
+    logger.debug(f"Current time: {now}, Filter: {filter_param}")
+
     # Показываем только одобренные мероприятия
     qs = Event.objects.filter(status="approved")
-    now = timezone.now()
+    logger.debug(f"Initial queryset count: {qs.count()}")
 
     if filter_param == "popular":
-        # Аннотируем количество регистраций и сортируем по убыванию
-        qs = qs.annotate(registrations_count=Count('eventregistration_set')).order_by('-registrations_count')
+        qs = qs.annotate(registrations_count=Count('registrations')).order_by('-registrations_count')
     elif filter_param == "upcoming":
-        # Мероприятия, заканчивающиеся через 1–3 недели
         qs = qs.filter(
-            end_datetime__gte=now + timedelta(weeks=1),
-            end_datetime__lte=now + timedelta(weeks=3)
-        ).order_by('end_datetime')
+            end_datetime__gte=now,  # Событие ещё не закончилось
+            start_datetime__lte=now + timedelta(weeks=3)  # Началось или начнётся в ближайшие 3 недели
+        ).order_by('start_datetime')
     elif filter_param == "planned":
-        # Мероприятия, заканчивающиеся через 3–10 недель
         qs = qs.filter(
-            end_datetime__gte=now + timedelta(weeks=3),
-            end_datetime__lte=now + timedelta(weeks=10)
-        ).order_by('end_datetime')
+            end_datetime__gte=now,  # Событие ещё не закончилось
+            start_datetime__gte=now + timedelta(weeks=3),  # Начинается после 3 недель
+            start_datetime__lte=now + timedelta(weeks=10)  # Начинается в следующие 3-10 недель
+        ).order_by('start_datetime')
     else:
         qs = qs.order_by('-created_at')
-    
+
+    logger.debug(f"Filtered queryset count: {qs.count()}")
+    for event in qs:
+        logger.debug(f"Event: {event.title}, Start: {event.start_datetime}, End: {event.end_datetime}")
+
     serializer = EventSerializer(qs, many=True)
     return Response(serializer.data, status=200)
+
 
 
 
@@ -1001,4 +1009,52 @@ def delete_event(request, pk):
     event.delete()
     return Response({'message': 'Мероприятие удалено'}, status=204)
 
+from .serializers import EventDetailSerializer, EventPhoto, EventPhotoSerializer
+@api_view(['GET'])
+def event_detail(request, pk):
+    try:
+        event = Event.objects.get(pk=pk)
+    except Event.DoesNotExist:
+        return Response({'error': 'Событие не найдено'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Показываем только одобренные события:
+    if event.status != 'approved':
+        return Response({'error': 'Событие не одобрено'}, status=status.HTTP_403_FORBIDDEN)
+
+    # По желанию: увеличиваем счётчик просмотров
+    event.views_count = F('views_count') + 1
+    event.save(update_fields=['views_count'])
+    event.refresh_from_db()
+
+    # Сериализация и возврат
+    serializer = EventDetailSerializer(event, context={'request': request})
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def add_event_photos(request, pk):
+    """Загрузка дополнительных фотографий к событию."""
+    try:
+        event = Event.objects.get(pk=pk)
+    except Event.DoesNotExist:
+        return Response({'error': 'Событие не найдено'}, status=404)
+
+    # Проверяем, передал ли пользователь файлы:
+    if 'photos' not in request.FILES:
+        return Response({'error': 'Нет файлов photos'}, status=400)
+
+    # Получаем список загружаемых файлов:
+    photos = request.FILES.getlist('photos')
+    
+    created_objs = []
+    for photo_file in photos:
+        new_photo = EventPhoto.objects.create(
+            event=event,
+            photo=photo_file
+        )
+        created_objs.append(new_photo)
+
+    # Сериализаторим добавленные фото, чтобы вернуть их в ответе
+    serializer = EventPhotoSerializer(created_objs, many=True)
+    return Response(serializer.data, status=201)
 
