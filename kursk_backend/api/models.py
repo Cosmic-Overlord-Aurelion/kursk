@@ -121,9 +121,7 @@ class NewsPhoto(models.Model):
 class Event(models.Model):
     id = models.AutoField(primary_key=True)
     title = models.CharField(max_length=255)
-    # Новое поле:
     subheader = models.CharField(max_length=500, blank=True, null=True)
-
     description = models.TextField(null=True, blank=True)
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
@@ -131,14 +129,19 @@ class Event(models.Model):
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
     image = models.ImageField(upload_to='events/', null=True, blank=True)
-    
-    status = models.CharField(max_length=20, default="pending") 
+    status = models.CharField(max_length=20, default="pending")
     address = models.CharField(max_length=255, null=True, blank=True)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
+    max_participants = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Максимальное количество участников",
+        help_text="0 означает, что ограничений нет"
+    )
 
     def __str__(self):
         return f"Event: {self.title}"
+
 
 class EventPhoto(models.Model):
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='photos')
@@ -151,13 +154,14 @@ class EventPhoto(models.Model):
 
 class EventRegistration(models.Model):
     id = models.AutoField(primary_key=True)
-    event = models.ForeignKey('Event', on_delete=models.CASCADE, related_name='registrations')
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='registrations')
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, default='going')
     registered_at = models.DateTimeField()
 
     class Meta:
         db_table = 'event_registrations'
+        unique_together = ('event', 'user')  
 
     def __str__(self):
         return f"Registration: {self.event.title} - {self.user.username}"
@@ -302,3 +306,4 @@ class EventView(models.Model):
 
     def __str__(self):
         return f"{self.user.username} viewed {self.event.title}"
+

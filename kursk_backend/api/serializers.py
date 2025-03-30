@@ -1,5 +1,6 @@
 import logging
 from rest_framework import serializers
+from django.contrib.contenttypes.models import ContentType  # Добавлен импорт
 from .models import (
     User, Friendship, Message, News,
     NewsPhoto,          
@@ -10,7 +11,13 @@ from .models import (
     UserActivity, EventPhoto        
 )
 
+# Настраиваем логгер
+logger = logging.getLogger(__name__)
+
 class UserSerializer(serializers.ModelSerializer):
+    avatar = serializers.ImageField(allow_null=True, required=False)
+    bio = serializers.CharField(allow_null=True, required=False)
+
     class Meta:
         model = User
         fields = [
@@ -18,6 +25,15 @@ class UserSerializer(serializers.ModelSerializer):
             'role', 'avatar', 'bio',
             'created_at', 'updated_at'
         ]
+
+    def to_representation(self, instance):
+        # Дополнительная обработка для явного указания значений
+        representation = super().to_representation(instance)
+        if representation['avatar'] is None:
+            representation['avatar'] = None  # Оставляем null для JSON
+        if representation['bio'] is None:
+            representation['bio'] = None  # Оставляем null для JSON
+        return representation
 
 class FriendshipSerializer(serializers.ModelSerializer):
     class Meta:
@@ -28,7 +44,6 @@ class MessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
         fields = '__all__'
-
 
 class NewsPhotoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -58,7 +73,7 @@ class NewsDetailSerializer(serializers.ModelSerializer):
     def get_is_liked(self, obj):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return obj.comment_likes.filter(user=request.user).exists()
+            return obj.likes.filter(id=request.user.id).exists()  # Исправлено: проверка через likes
         return False
 
     def get_likes(self, obj):
@@ -66,7 +81,7 @@ class NewsDetailSerializer(serializers.ModelSerializer):
 
 class NewsListSerializer(serializers.ModelSerializer):
     photos = NewsPhotoSerializer(many=True, read_only=True)
-    likes = serializers.SerializerMethodField()  # добавляем поле для подсчёта лайков
+    likes = serializers.SerializerMethodField()
 
     class Meta:
         model = News
@@ -94,11 +109,15 @@ class NewsSerializer(serializers.ModelSerializer):
         return obj.likes.count()
 
 class EventSerializer(serializers.ModelSerializer):
+    registrations_count = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = Event
         fields = '__all__'
         read_only_fields = ('created_at', 'status', 'views_count')
 
+    def get_registrations_count(self, obj):
+        return obj.registrations.count()
 
 class EventRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -110,10 +129,8 @@ class EventPhotoSerializer(serializers.ModelSerializer):
         model = EventPhoto
         fields = ['id', 'photo', 'uploaded_at']
 
-
-
 class EventDetailSerializer(serializers.ModelSerializer):
-    organizer = UserSerializer(read_only=True) 
+    organizer = UserSerializer(read_only=True)
     registrations_count = serializers.SerializerMethodField()
     is_registered = serializers.SerializerMethodField()
     photos = EventPhotoSerializer(many=True, read_only=True)
@@ -148,13 +165,6 @@ class PlaceRatingSerializer(serializers.ModelSerializer):
         model = PlaceRating
         fields = '__all__'
 
-from rest_framework import serializers
-from django.contrib.contenttypes.models import ContentType
-from .models import Comment
-from .serializers import UserSerializer
-
-logger = logging.getLogger(__name__)
-
 class CommentSerializer(serializers.ModelSerializer):
     entity_id = serializers.IntegerField(write_only=True, source='object_id')
     entity_type = serializers.CharField(write_only=True)
@@ -166,10 +176,10 @@ class CommentSerializer(serializers.ModelSerializer):
     )
     user = UserSerializer(read_only=True)
     likes_count = serializers.SerializerMethodField()
-    is_liked = serializers.SerializerMethodField()  # Проверка лайка текущим пользователем
-    user_avatar = serializers.SerializerMethodField()  # URL аватара пользователя
-    children = serializers.SerializerMethodField()  # Вложенные комментарии
-    reply_to = serializers.SerializerMethodField()    # Никнейм родительского комментария
+    is_liked = serializers.SerializerMethodField()
+    user_avatar = serializers.SerializerMethodField()
+    children = serializers.SerializerMethodField()
+    reply_to = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
@@ -180,7 +190,7 @@ class CommentSerializer(serializers.ModelSerializer):
         ]
 
     def get_likes_count(self, obj):
-        return obj.likes_count  # Используем свойство модели
+        return obj.likes_count
 
     def get_is_liked(self, obj):
         logger.debug(f"get_is_liked called for comment {obj.id}, context: {self.context}")
@@ -274,7 +284,6 @@ class CommentSerializer(serializers.ModelSerializer):
         comment = super().create(validated_data)
         logger.debug(f"Created comment: {comment.id}")
         return comment
-
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:

@@ -4,11 +4,11 @@ from django.conf import settings
 
 from .models import (
     User, Friendship, Message, News, NewsPhoto,
-    Event, EventRegistration, EventPhoto,  # <-- Убедитесь, что импортируете EventPhoto
+    Event, EventRegistration, EventPhoto,  # Убедитесь, что импортируете EventPhoto
     Place, PlaceRating, Comment
 )
 
-# Inline для загрузки нескольких фото к новости (у вас уже есть)
+# Inline для загрузки нескольких фото к новости
 class NewsPhotoInline(admin.TabularInline):
     """
     Позволяет загружать сразу несколько фото к новости в админке.
@@ -27,12 +27,10 @@ class NewsAdmin(admin.ModelAdmin):
         return obj.likes.count()
     likes_count.short_description = 'Лайки'
 
-
 @admin.register(NewsPhoto)
 class NewsPhotoAdmin(admin.ModelAdmin):
     list_display = ('id', 'news', 'uploaded_at')
     search_fields = ('news__title',)
-
 
 @admin.register(Comment)
 class CommentAdmin(admin.ModelAdmin):
@@ -53,7 +51,6 @@ class CommentAdmin(admin.ModelAdmin):
     def get_parent_comment_id(self, obj):
         return obj.parent_comment.id if obj.parent_comment else None
     get_parent_comment_id.short_description = "Parent Comment ID"
-
 
 # Регистрируем модели без кастомизации
 admin.site.register(User)
@@ -79,7 +76,6 @@ def approve_events(modeladmin, request, queryset):
     modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
 approve_events.short_description = "Одобрить выбранные мероприятия"
 
-
 def reject_events(modeladmin, request, queryset):
     for event in queryset:
         if event.status != 'rejected':
@@ -96,7 +92,6 @@ def reject_events(modeladmin, request, queryset):
     modeladmin.message_user(request, "Выбранные мероприятия были отклонены.")
 reject_events.short_description = "Отклонить выбранные мероприятия"
 
-
 # Inline для загрузки нескольких фото к событию
 class EventPhotoInline(admin.TabularInline):
     """
@@ -105,14 +100,23 @@ class EventPhotoInline(admin.TabularInline):
     model = EventPhoto
     extra = 5
 
-
+# Обновлённый класс EventAdmin с добавленным полем max_participants
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('title', 'organizer', 'status', 'created_at')
+    list_display = ('title', 'organizer', 'status', 'created_at', 'max_participants')
     list_filter = ('status', 'created_at')
     actions = [approve_events, reject_events]
-    inlines = [EventPhotoInline]  
-
+    inlines = [EventPhotoInline]
+    fieldsets = (
+        (None, {
+            'fields': ('title', 'subheader', 'description', 'organizer', 'created_at', 'image')
+        }),
+        ('Детали мероприятия', {
+            'fields': ('start_datetime', 'end_datetime', 'address', 'latitude', 'longitude')
+        }),
+        ('Статус и лимиты', {
+            'fields': ('status', 'views_count', 'max_participants')
+        }),
+    )
 
 admin.site.register(Event, EventAdmin)
-
 admin.site.register(EventRegistration)

@@ -632,12 +632,11 @@ from django.db.models import Count
 logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def list_events(request):
     filter_param = request.GET.get('filter')
     now = timezone.now()
     logger.debug(f"Current time: {now}, Filter: {filter_param}")
-
-    # Показываем только одобренные мероприятия
     qs = Event.objects.filter(status="approved")
     logger.debug(f"Initial queryset count: {qs.count()}")
 
@@ -645,27 +644,27 @@ def list_events(request):
         qs = qs.annotate(registrations_count=Count('registrations')).order_by('-registrations_count')
     elif filter_param == "upcoming":
         qs = qs.filter(
-            end_datetime__gte=now,  # Событие ещё не закончилось
-            start_datetime__lte=now + timedelta(weeks=3)  # Началось или начнётся в ближайшие 3 недели
+            end_datetime__gte=now,
+            start_datetime__lte=now + timedelta(weeks=3)  
         ).order_by('start_datetime')
     elif filter_param == "planned":
         qs = qs.filter(
-            end_datetime__gte=now,  # Событие ещё не закончилось
-            start_datetime__gte=now + timedelta(weeks=3),  # Начинается после 3 недель
-            start_datetime__lte=now + timedelta(weeks=10)  # Начинается в следующие 3-10 недель
+            end_datetime__gte=now,  
+            start_datetime__gte=now + timedelta(weeks=3),  
+            start_datetime__lte=now + timedelta(weeks=10)  
         ).order_by('start_datetime')
     else:
         qs = qs.order_by('-created_at')
 
     logger.debug(f"Filtered queryset count: {qs.count()}")
     for event in qs:
-        logger.debug(f"Event: {event.title}, Start: {event.start_datetime}, End: {event.end_datetime}")
+        logger.debug(
+            f"Event: {event.title}, Start: {event.start_datetime}, "
+            f"End: {event.end_datetime}, Registrations: {getattr(event, 'registrations_count', 'N/A')}"
+        )
 
     serializer = EventSerializer(qs, many=True)
     return Response(serializer.data, status=200)
-
-
-
 
 @api_view(['POST'])
 def create_event(request):
@@ -682,14 +681,28 @@ def create_event(request):
 
 
 @api_view(['POST'])
-def register_for_event(request):
-    data = request.data.copy()
-    data['registered_at'] = str(timezone.now())
-    s = EventRegistrationSerializer(data=data)
-    if s.is_valid():
-        reg = s.save()
-        return Response(EventRegistrationSerializer(reg).data, status=201)
-    return Response(s.errors, status=400)
+@authentication_classes([CustomTokenAuthentication, SessionAuthentication])
+@permission_classes([IsAuthenticated])
+def register_for_event(request, pk):
+    try:
+        event = Event.objects.get(id=pk)
+    except Event.DoesNotExist:
+        return Response({"error": "Мероприятие не найдено"}, status=status.HTTP_404_NOT_FOUND)
+    
+    if EventRegistration.objects.filter(event=event, user=request.user).exists():
+        return Response({"error": "Вы уже зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    data = {
+        'event': pk,  
+        'user': request.user.id, 
+        'registered_at': timezone.now()
+    }
+
+    serializer = EventRegistrationSerializer(data=data)
+    if serializer.is_valid():
+        registration = serializer.save()
+        return Response(EventRegistrationSerializer(registration).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
 def list_places(request):
@@ -1012,27 +1025,36 @@ def delete_event(request, pk):
 from .serializers import EventDetailSerializer, EventPhoto, EventPhotoSerializer
 from .models import EventView  # не забудь импорт
 
-@api_view(['GET'])
+@api_view(['GET', 'DELETE'])
+@permission_classes([IsAuthenticated])  # Добавляем авторизацию для DELETE
 def event_detail(request, pk):
     try:
         event = Event.objects.get(pk=pk)
     except Event.DoesNotExist:
         return Response({'error': 'Событие не найдено'}, status=status.HTTP_404_NOT_FOUND)
 
-    if event.status != 'approved':
-        return Response({'error': 'Событие не одобрено'}, status=status.HTTP_403_FORBIDDEN)
+    if request.method == 'GET':
+        if event.status != 'approved':
+            return Response({'error': 'Событие не одобрено'}, status=status.HTTP_403_FORBIDDEN)
 
+        if request.user.is_authenticated:
+            already_viewed = EventView.objects.filter(event=event, user=request.user).exists()
+            if not already_viewed:
+                EventView.objects.create(event=event, user=request.user)
+                event.views_count = F('views_count') + 1
+                event.save(update_fields=['views_count'])
+                event.refresh_from_db()
 
-    if request.user.is_authenticated:
-        already_viewed = EventView.objects.filter(event=event, user=request.user).exists()
-        if not already_viewed:
-            EventView.objects.create(event=event, user=request.user)
-            event.views_count = F('views_count') + 1
-            event.save(update_fields=['views_count'])
-            event.refresh_from_db()
+        serializer = EventDetailSerializer(event, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    serializer = EventDetailSerializer(event, context={'request': request})
-    return Response(serializer.data, status=status.HTTP_200_OK)
+    elif request.method == 'DELETE':
+        if not request.user.is_authenticated:
+            return Response({'error': 'Требуется аутентификация'}, status=status.HTTP_401_UNAUTHORIZED)
+        if event.organizer != request.user:
+            return Response({'error': 'Вы не можете удалить это мероприятие'}, status=status.HTTP_403_FORBIDDEN)
+        event.delete()
+        return Response({'message': 'Мероприятие удалено'}, status=status.HTTP_204_NO_CONTENT)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -1061,4 +1083,30 @@ def add_event_photos(request, pk):
     # Сериализаторим добавленные фото, чтобы вернуть их в ответе
     serializer = EventPhotoSerializer(created_objs, many=True)
     return Response(serializer.data, status=201)
+from django.shortcuts import get_object_or_404
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([CustomTokenAuthentication])
+def delete_event(request, pk):
+    """
+    Удаляет мероприятие, если пользователь является его организатором.
+    """
+    print(f"DEBUG: delete_event called for event_id={pk}")
+    print(f"DEBUG: Authenticated user: {request.user.username} ({request.user.email})")
 
+    # Находим мероприятие
+    event = get_object_or_404(Event, id=pk)
+    print(f"DEBUG: Found event: {event.title}")
+
+    # Проверяем, является ли текущий пользователь организатором мероприятия
+    if event.organizer != request.user:
+        print(f"DEBUG: User {request.user.username} is not the organizer of event {pk}")
+        return Response(
+            {"detail": "You are not the organizer of this event."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Удаляем мероприятие
+    event.delete()
+    print(f"DEBUG: Event {pk} deleted successfully")
+    return Response(status=status.HTTP_204_NO_CONTENT)  

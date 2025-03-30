@@ -10,7 +10,7 @@ from .views import (
     list_user_activity, add_user_activity, verify_email, login_user,
     request_password_reset, confirm_password_reset, check_user_exists,
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
-    get_latest_comment, event_detail, add_event_photos
+    get_latest_comment, event_detail, add_event_photos, delete_event
 )
 
 urlpatterns = [
@@ -41,9 +41,11 @@ urlpatterns = [
     # События
     path('events/', list_events, name='list_events'),
     path('events/create/', create_event, name='create_event'),
-    path('events/register/', register_for_event, name='register_for_event'),
+    path('events/<int:pk>/register/', register_for_event, name='register_for_event'),  # Изменено
     path('events/<int:pk>/', event_detail, name='event_detail'),
     path('events/<int:pk>/photos/add/', add_event_photos, name='add_event_photos'),
+    path('events/<int:pk>/', delete_event, name='delete_event'),  # Изменено
+
     # Места
     path('places/', list_places, name='list_places'),
     path('places/create/', create_place, name='create_place'),
@@ -56,7 +58,7 @@ urlpatterns = [
     path('comments/<int:comment_id>/delete/', delete_comment, name='delete_comment'),
     path('comments/<int:comment_id>/update/', update_comment, name='update_comment'),
     path('comments/<int:comment_id>/like_toggle/', toggle_comment_like, name='toggle_comment_like'),
-    path('comments/latest/<int:news_id>/', get_latest_comment, name='get_latest_comment'),  # Новый маршрут
+    path('comments/latest/<int:news_id>/', get_latest_comment, name='get_latest_comment'),
 
     # Уведомления
     path('notifications/', list_notifications, name='list_notifications'),
