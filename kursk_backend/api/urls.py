@@ -41,10 +41,10 @@ urlpatterns = [
     # События
     path('events/', list_events, name='list_events'),
     path('events/create/', create_event, name='create_event'),
-    path('events/<int:pk>/register/', register_for_event, name='register_for_event'),  # Изменено
-    path('events/<int:pk>/', event_detail, name='event_detail'),
+    path('events/<int:pk>/register/', register_for_event, name='register_for_event'),
+    path('events/<int:pk>/', event_detail, name='event_detail'),  # Оставляем для GET
+    path('events/<int:pk>/delete/', delete_event, name='delete_event'),  # Новый путь для DELETE
     path('events/<int:pk>/photos/add/', add_event_photos, name='add_event_photos'),
-    path('events/<int:pk>/', delete_event, name='delete_event'),  # Изменено
 
     # Места
     path('places/', list_places, name='list_places'),

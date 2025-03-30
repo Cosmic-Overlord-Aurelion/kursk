@@ -678,9 +678,7 @@ def create_event(request):
         return Response(EventSerializer(event).data, status=201)
     return Response(serializer.errors, status=400)
 
-
-
-@api_view(['POST'])
+@api_view(['POST', 'DELETE'])
 @authentication_classes([CustomTokenAuthentication, SessionAuthentication])
 @permission_classes([IsAuthenticated])
 def register_for_event(request, pk):
@@ -688,21 +686,62 @@ def register_for_event(request, pk):
         event = Event.objects.get(id=pk)
     except Event.DoesNotExist:
         return Response({"error": "Мероприятие не найдено"}, status=status.HTTP_404_NOT_FOUND)
-    
-    if EventRegistration.objects.filter(event=event, user=request.user).exists():
-        return Response({"error": "Вы уже зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
-    
-    data = {
-        'event': pk,  
-        'user': request.user.id, 
-        'registered_at': timezone.now()
-    }
 
-    serializer = EventRegistrationSerializer(data=data)
-    if serializer.is_valid():
-        registration = serializer.save()
-        return Response(EventRegistrationSerializer(registration).data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    if request.method == 'POST':
+        if EventRegistration.objects.filter(event=event, user=request.user).exists():
+            return Response({"error": "Вы уже зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = {
+            'event': pk,
+            'user': request.user.id,
+            'registered_at': timezone.now()
+        }
+
+        serializer = EventRegistrationSerializer(data=data)
+        if serializer.is_valid():
+            registration = serializer.save()
+
+            
+            threading.Thread(target=send_event_registration_email, args=(request.user, event)).start()
+
+            return Response(EventRegistrationSerializer(registration).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    elif request.method == 'DELETE':
+        registration = EventRegistration.objects.filter(event=event, user=request.user).first()
+        if not registration:
+            return Response({"error": "Вы не зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
+        registration.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+def send_event_registration_email(user, event):
+    SMTP_SERVER = "smtp.yandex.ru"
+    SMTP_PORT = 465
+    SENDER_EMAIL = "dylanbob0@yandex.ru"
+    SENDER_PASSWORD = "qundmssnkzvpurqq"
+
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = SENDER_EMAIL
+        msg["To"] = user.email
+        msg["Subject"] = f"Регистрация на мероприятие \"{event.title}\""
+
+        body = (
+            f"Здравствуйте, {user.username}!\n\n"
+            f"Вы успешно зарегистрировались на мероприятие: {event.title}.\n"
+            f"Дата: {event.start_datetime.strftime('%d.%m.%Y %H:%M')} - {event.end_datetime.strftime('%d.%m.%Y %H:%M')}\n"
+            f"Адрес: {event.address or 'не указан'}\n\n"
+            f"Спасибо, что участвуете в жизни сообщества!"
+        )
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, user.email, msg.as_string())
+        server.quit()
+        logger.info(f" Уведомление о регистрации отправлено на {user.email}")
+    except Exception as e:
+        logger.error(f" Ошибка при отправке письма: {e}")
 
 @api_view(['GET'])
 def list_places(request):
@@ -1047,6 +1086,7 @@ def event_detail(request, pk):
 
         serializer = EventDetailSerializer(event, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
     elif request.method == 'DELETE':
         if not request.user.is_authenticated:
