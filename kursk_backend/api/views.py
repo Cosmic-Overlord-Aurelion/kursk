@@ -668,11 +668,7 @@ def list_events(request):
 
 @api_view(['POST'])
 def create_event(request):
-    data = request.data.copy()
-    data['created_at'] = str(timezone.now())
-    data['status'] = 'pending'  
-    
-    serializer = EventSerializer(data=data)
+    serializer = EventSerializer(data=request.data)
     if serializer.is_valid():
         event = serializer.save()
         return Response(EventSerializer(event).data, status=201)

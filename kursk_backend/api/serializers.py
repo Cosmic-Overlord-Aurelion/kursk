@@ -108,13 +108,14 @@ class NewsSerializer(serializers.ModelSerializer):
     def get_likes(self, obj):
         return obj.likes.count()
 
+
 class EventSerializer(serializers.ModelSerializer):
     registrations_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Event
         fields = '__all__'
-        read_only_fields = ('created_at', 'status', 'views_count')
+        read_only_fields = ('created_at', 'updated_at', 'status', 'views_count')
 
     def get_registrations_count(self, obj):
         return obj.registrations.count()

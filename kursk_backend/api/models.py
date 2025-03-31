@@ -127,7 +127,8 @@ class Event(models.Model):
     end_datetime = models.DateTimeField(null=True, blank=True)
     organizer = models.ForeignKey('User', on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)  # Автоматически заполняется при создании
+    updated_at = models.DateTimeField(auto_now=True)  # Автоматически обновляется при изменении
     image = models.ImageField(upload_to='events/', null=True, blank=True)
     status = models.CharField(max_length=20, default="pending")
     address = models.CharField(max_length=255, null=True, blank=True)

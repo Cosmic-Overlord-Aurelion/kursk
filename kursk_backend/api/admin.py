@@ -4,7 +4,7 @@ from django.conf import settings
 
 from .models import (
     User, Friendship, Message, News, NewsPhoto,
-    Event, EventRegistration, EventPhoto,  # Убедитесь, что импортируете EventPhoto
+    Event, EventRegistration, EventPhoto,
     Place, PlaceRating, Comment
 )
 
@@ -100,23 +100,26 @@ class EventPhotoInline(admin.TabularInline):
     model = EventPhoto
     extra = 5
 
-# Обновлённый класс EventAdmin с добавленным полем max_participants
+# Обновлённый класс EventAdmin
+@admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
     list_display = ('title', 'organizer', 'status', 'created_at', 'max_participants')
     list_filter = ('status', 'created_at')
+    search_fields = ('title', 'description')  # Добавляем поиск по названию и описанию
     actions = [approve_events, reject_events]
     inlines = [EventPhotoInline]
+    readonly_fields = ('created_at', 'updated_at', 'views_count')  # Поля только для чтения
+
     fieldsets = (
         (None, {
-            'fields': ('title', 'subheader', 'description', 'organizer', 'created_at', 'image')
+            'fields': ('title', 'subheader', 'description', 'organizer', 'image')
         }),
         ('Детали мероприятия', {
             'fields': ('start_datetime', 'end_datetime', 'address', 'latitude', 'longitude')
         }),
         ('Статус и лимиты', {
-            'fields': ('status', 'views_count', 'max_participants')
+            'fields': ('status', 'max_participants')
         }),
     )
 
-admin.site.register(Event, EventAdmin)
 admin.site.register(EventRegistration)
