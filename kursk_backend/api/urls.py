@@ -10,7 +10,7 @@ from .views import (
     list_user_activity, add_user_activity, verify_email, login_user,
     request_password_reset, confirm_password_reset, check_user_exists,
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
-    get_latest_comment, event_detail, add_event_photos, delete_event
+    get_latest_comment, event_detail, add_event_photos, delete_event, update_event_preview
 )
 
 urlpatterns = [
@@ -45,6 +45,7 @@ urlpatterns = [
     path('events/<int:pk>/', event_detail, name='event_detail'),  # Оставляем для GET
     path('events/<int:pk>/delete/', delete_event, name='delete_event'),  # Новый путь для DELETE
     path('events/<int:pk>/photos/add/', add_event_photos, name='add_event_photos'),
+    path('events/<int:pk>/update_preview/', update_event_preview, name='update_event_preview'),
 
     # Места
     path('places/', list_places, name='list_places'),

@@ -1124,9 +1124,7 @@ from django.shortcuts import get_object_or_404
 @permission_classes([IsAuthenticated])
 @authentication_classes([CustomTokenAuthentication])
 def delete_event(request, pk):
-    """
-    Удаляет мероприятие, если пользователь является его организатором.
-    """
+
     print(f"DEBUG: delete_event called for event_id={pk}")
     print(f"DEBUG: Authenticated user: {request.user.username} ({request.user.email})")
 
@@ -1146,3 +1144,30 @@ def delete_event(request, pk):
     event.delete()
     print(f"DEBUG: Event {pk} deleted successfully")
     return Response(status=status.HTTP_204_NO_CONTENT)  
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([CustomTokenAuthentication])
+def update_event_preview(request, pk):
+    """
+    Обновляет превью-изображение мероприятия.
+    """
+    try:
+        event = Event.objects.get(pk=pk)
+    except Event.DoesNotExist:
+        return Response({'error': 'Событие не найдено'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Проверяем, что пользователь — организатор
+    if event.organizer != request.user:
+        return Response({'error': 'Вы не можете обновить это мероприятие'}, status=status.HTTP_403_FORBIDDEN)
+
+    # Проверяем, передан ли файл
+    if 'image' not in request.FILES:
+        return Response({'error': 'Изображение не предоставлено'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Обновляем поле image
+    event.image = request.FILES['image']
+    event.save(update_fields=['image'])
+
+    serializer = EventSerializer(event)
+    return Response(serializer.data, status=status.HTTP_200_OK)
