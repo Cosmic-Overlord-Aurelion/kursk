@@ -143,9 +143,11 @@ class EventDetailSerializer(serializers.ModelSerializer):
             'start_datetime', 'end_datetime', 'organizer',
             'views_count', 'created_at', 'image', 'status',
             'address', 'latitude', 'longitude',
+            'max_participants',  
             'registrations_count', 'is_registered',
             'photos'
         ]
+
 
     def get_registrations_count(self, obj):
         return obj.registrations.count()

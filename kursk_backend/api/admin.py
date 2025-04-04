@@ -5,7 +5,7 @@ from django.conf import settings
 from .models import (
     User, Friendship, Message, News, NewsPhoto,
     Event, EventRegistration, EventPhoto,
-    Place, PlaceRating, Comment
+    Place, PlaceRating, Comment, Notification  # <-- Импортируем Notification
 )
 
 # Inline для загрузки нескольких фото к новости
@@ -65,6 +65,7 @@ def approve_events(modeladmin, request, queryset):
         if event.status != 'approved':
             event.status = 'approved'
             event.save()
+
             # Отправка email уведомления об одобрении
             send_mail(
                 subject="Мероприятие одобрено",
@@ -73,7 +74,16 @@ def approve_events(modeladmin, request, queryset):
                 recipient_list=[event.organizer.email],
                 fail_silently=True,
             )
+            # Создаём уведомление, чтобы пользователь видел в приложении
+            Notification.objects.create(
+                user=event.organizer,
+                type='event_approved',
+                message=f"Ваше мероприятие «{event.title}» было одобрено администрацией!",
+                entity_type='event',
+                entity_id=event.id,
+            )
     modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
+
 approve_events.short_description = "Одобрить выбранные мероприятия"
 
 def reject_events(modeladmin, request, queryset):
@@ -81,6 +91,7 @@ def reject_events(modeladmin, request, queryset):
         if event.status != 'rejected':
             event.status = 'rejected'
             event.save()
+
             # Отправка email уведомления об отказе
             send_mail(
                 subject="Мероприятие отклонено",
@@ -89,7 +100,16 @@ def reject_events(modeladmin, request, queryset):
                 recipient_list=[event.organizer.email],
                 fail_silently=True,
             )
+            # Создаём уведомление, чтобы пользователь видел в приложении
+            Notification.objects.create(
+                user=event.organizer,
+                type='event_rejected',
+                message=f"К сожалению, ваше мероприятие «{event.title}» было отклонено администрацией.",
+                entity_type='event',
+                entity_id=event.id,
+            )
     modeladmin.message_user(request, "Выбранные мероприятия были отклонены.")
+
 reject_events.short_description = "Отклонить выбранные мероприятия"
 
 # Inline для загрузки нескольких фото к событию

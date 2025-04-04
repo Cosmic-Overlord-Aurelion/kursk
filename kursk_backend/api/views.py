@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 from django.contrib.auth.hashers import make_password, check_password
@@ -666,13 +667,83 @@ def list_events(request):
     serializer = EventSerializer(qs, many=True)
     return Response(serializer.data, status=200)
 
+logger = logging.getLogger(__name__)
+
+
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def create_event(request):
-    serializer = EventSerializer(data=request.data)
-    if serializer.is_valid():
-        event = serializer.save()
-        return Response(EventSerializer(event).data, status=201)
-    return Response(serializer.errors, status=400)
+
+    serializer = EventSerializer(data=request.data, context={'request': request})
+
+    # Проверка валидации
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    # Сохраняем мероприятие со статусом 'pending' и организатором == текущий user
+    event = serializer.save(status='pending', organizer=request.user)
+
+    # -- 1. Отправляем email в отдельном потоке
+    def _send_email_about_pending_event(user_email, event_title):
+        subject = f"Вы подали мероприятие: {event_title}"
+        body = (
+            f"Здравствуйте! Ваше мероприятие «{event_title}» отправлено на модерацию.\n\n"
+            "Ожидайте, когда администратор его рассмотрит. "
+            "После модерации вы получите новое уведомление."
+        )
+        try:
+            send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,  # У вас в settings.py
+                recipient_list=[user_email],
+                fail_silently=True,  # Чтобы не ронять процесс при ошибках
+            )
+        except Exception as e:
+            logger.error(f"[create_event] Ошибка при отправке email: {e}")
+
+    threading.Thread(
+        target=_send_email_about_pending_event,
+        args=(request.user.email, event.title)
+    ).start()
+
+    # -- 2. Создаём уведомление
+    Notification.objects.create(
+        user=request.user,
+        type='event_submitted',  # Произвольный тип, чтобы различать типы уведомлений
+        message=(
+            f"Ваше мероприятие '{event.title}' отправлено на модерацию. "
+            "Статус: 'pending'. Ожидайте результатов проверки."
+        ),
+        entity_type='event',  
+        entity_id=event.id
+    )
+
+    # -- 3. Возвращаем ответ
+    return Response(
+        EventSerializer(event, context={'request': request}).data,
+        status=status.HTTP_201_CREATED
+    )
+
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.response import Response
+from rest_framework import status
+from django.utils import timezone
+from rest_framework.authentication import SessionAuthentication
+from rest_framework.permissions import IsAuthenticated
+
+from .authentication import CustomTokenAuthentication
+from .serializers import EventRegistrationSerializer
+from .models import Event, EventRegistration, Notification
+
+import threading
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @api_view(['POST', 'DELETE'])
 @authentication_classes([CustomTokenAuthentication, SessionAuthentication])
@@ -684,9 +755,20 @@ def register_for_event(request, pk):
         return Response({"error": "Мероприятие не найдено"}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'POST':
-        if EventRegistration.objects.filter(event=event, user=request.user).exists():
+        # Проверка, зарегистрирован ли уже
+        already_registered = EventRegistration.objects.filter(event=event, user=request.user).exists()
+        if already_registered:
             return Response({"error": "Вы уже зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Проверка лимита
+        if event.max_participants and event.max_participants > 0:
+            current_count = EventRegistration.objects.filter(event=event).count()
+            if current_count >= event.max_participants:
+                return Response({
+                    "error": "Достигнут лимит участников для этого мероприятия."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Данные
         data = {
             'event': pk,
             'user': request.user.id,
@@ -697,18 +779,48 @@ def register_for_event(request, pk):
         if serializer.is_valid():
             registration = serializer.save()
 
-            
-            threading.Thread(target=send_event_registration_email, args=(request.user, event)).start()
+            # 🔔 Уведомление организатору
+            if request.user != event.organizer:
+                Notification.objects.create(
+                    user=event.organizer,
+                    type='event_joined',
+                    message=f"{request.user.username} записался на ваше мероприятие «{event.title}»",
+                    entity_type='event',
+                    entity_id=event.id,
+                )
 
-            return Response(EventRegistrationSerializer(registration).data, status=status.HTTP_201_CREATED)
+            # Отправка email
+            threading.Thread(
+                target=send_event_registration_email,
+                args=(request.user, event)
+            ).start()
+
+            return Response(
+                EventRegistrationSerializer(registration).data,
+                status=status.HTTP_201_CREATED
+            )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     elif request.method == 'DELETE':
+        # Отмена участия
         registration = EventRegistration.objects.filter(event=event, user=request.user).first()
         if not registration:
             return Response({"error": "Вы не зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
+
         registration.delete()
+
+        # 🔔 Уведомление организатору о выходе
+        if request.user != event.organizer:
+            Notification.objects.create(
+                user=event.organizer,
+                type='event_left',
+                message=f"{request.user.username} отменил участие в мероприятии «{event.title}»",
+                entity_type='event',
+                entity_id=event.id,
+            )
+
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 def send_event_registration_email(user, event):
     SMTP_SERVER = "smtp.yandex.ru"
@@ -720,7 +832,7 @@ def send_event_registration_email(user, event):
         msg = MIMEMultipart()
         msg["From"] = SENDER_EMAIL
         msg["To"] = user.email
-        msg["Subject"] = f"Регистрация на мероприятие \"{event.title}\""
+        msg["Subject"] = f"Регистрация на мероприятие «{event.title}»"
 
         body = (
             f"Здравствуйте, {user.username}!\n\n"
@@ -735,9 +847,10 @@ def send_event_registration_email(user, event):
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.sendmail(SENDER_EMAIL, user.email, msg.as_string())
         server.quit()
-        logger.info(f" Уведомление о регистрации отправлено на {user.email}")
+        logger.info(f"📧 Email-уведомление о регистрации отправлено на {user.email}")
     except Exception as e:
-        logger.error(f" Ошибка при отправке письма: {e}")
+        logger.error(f"❌ Ошибка при отправке письма: {e}")
+
 
 @api_view(['GET'])
 def list_places(request):
@@ -795,12 +908,42 @@ def create_comment(request):
     serializer = CommentSerializer(data=data, context={'request': request})
     if serializer.is_valid():
         comment = serializer.save()
+
+        # 🔔 Уведомления только для мероприятий
+        if comment.content_type.model == 'event':
+            from .models import Event, Notification
+
+            try:
+                event = Event.objects.get(id=comment.object_id)
+            except Event.DoesNotExist:
+                pass
+            else:
+                # Если корневой комментарий, уведомляем организатора события
+                if not comment.parent_comment and request.user != event.organizer:
+                    Notification.objects.create(
+                        user=event.organizer,
+                        type='event_comment',
+                        message=f"{request.user.username} оставил комментарий к вашему мероприятию '{event.title}'",
+                        entity_type='event',
+                        entity_id=event.id,
+                    )
+                # Если это ответ на другой комментарий
+                elif comment.parent_comment and request.user != comment.parent_comment.user:
+                    Notification.objects.create(
+                        user=comment.parent_comment.user,
+                        type='event_comment_reply',
+                        message=f"{request.user.username} ответил на ваш комментарий в мероприятии '{event.title}'",
+                        entity_type='event',
+                        entity_id=event.id,
+                    )
+
         return Response(
             CommentSerializer(comment, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
             content_type="application/json"
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.pagination import PageNumberPagination
@@ -871,7 +1014,9 @@ def get_latest_comment(request, news_id):
     except Exception as e:
         return Response({"error": str(e)}, status=400)
     
-from .models import CommentLike
+from .models import CommentLike, Notification  # добавили Notification
+from django.contrib.contenttypes.models import ContentType
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def toggle_comment_like(request, comment_id):
@@ -890,6 +1035,16 @@ def toggle_comment_like(request, comment_id):
         message = "Лайк поставлен"
         liked = True
 
+        # Создание уведомления, если пользователь лайкнул чужой комментарий
+        if comment.user != request.user:
+            Notification.objects.create(
+                user=comment.user,
+                type='comment_liked',
+                message=f"Пользователю {request.user.username} понравился ваш комментарий: «{comment.content[:50]}»",
+                entity_type=comment.content_type.model,
+                entity_id=comment.object_id,
+            )
+
     current_likes = comment.comment_likes.count()
     return Response({
         "comment_id": comment_id,
@@ -897,6 +1052,7 @@ def toggle_comment_like(request, comment_id):
         "liked": liked,
         "likes_count": current_likes
     }, status=200)
+
 
 
 logger = logging.getLogger(__name__)
@@ -930,14 +1086,12 @@ def update_comment(request, comment_id):
     return Response(ser.data, status=200)
 
 @api_view(['GET'])
+@authentication_classes([CustomTokenAuthentication, SessionAuthentication])
+@permission_classes([IsAuthenticated])
 def list_notifications(request):
-    user_id = request.query_params.get('user_id')
-    if not user_id:
-        return Response({'error': 'No user_id'}, status=400)
-
-    notifs = Notification.objects.filter(user_id=user_id).order_by('-created_at')
-    ser = NotificationSerializer(notifs, many=True)
-    return Response(ser.data, status=200)
+    notifications = Notification.objects.filter(user=request.user).order_by('-created_at')
+    serializer = NotificationSerializer(notifications, many=True)
+    return Response(serializer.data)
 
 
 @api_view(['POST'])
@@ -1171,3 +1325,13 @@ def update_event_preview(request, pk):
 
     serializer = EventSerializer(event)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def my_events(request):
+    user = request.user
+    # Получаем все мероприятия, где organizer == текущий пользователь
+    qs = Event.objects.filter(organizer=user).order_by('-created_at')
+    
+    serializer = EventSerializer(qs, many=True, context={'request': request})
+    return Response(serializer.data, status=200)
