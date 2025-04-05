@@ -111,6 +111,7 @@ class NewsSerializer(serializers.ModelSerializer):
 
 class EventSerializer(serializers.ModelSerializer):
     registrations_count = serializers.SerializerMethodField(read_only=True)
+    comments_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Event
@@ -119,6 +120,10 @@ class EventSerializer(serializers.ModelSerializer):
 
     def get_registrations_count(self, obj):
         return obj.registrations.count()
+
+    def get_comments_count(self, obj):
+        return obj.comments.count()
+
 
 class EventRegistrationSerializer(serializers.ModelSerializer):
     class Meta:

@@ -127,8 +127,8 @@ class Event(models.Model):
     end_datetime = models.DateTimeField(null=True, blank=True)
     organizer = models.ForeignKey('User', on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)  # Автоматически заполняется при создании
-    updated_at = models.DateTimeField(auto_now=True)  # Автоматически обновляется при изменении
+    created_at = models.DateTimeField(auto_now_add=True)  
+    updated_at = models.DateTimeField(auto_now=True)  
     image = models.ImageField(upload_to='events/', null=True, blank=True)
     status = models.CharField(max_length=20, default="pending")
     address = models.CharField(max_length=255, null=True, blank=True)
@@ -139,6 +139,8 @@ class Event(models.Model):
         verbose_name="Максимальное количество участников",
         help_text="0 означает, что ограничений нет"
     )
+    # Постоянная связь с комментариями
+    comments = GenericRelation('Comment')
 
     def __str__(self):
         return f"Event: {self.title}"

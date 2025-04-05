@@ -1328,10 +1328,22 @@ def update_event_preview(request, pk):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@authentication_classes([CustomTokenAuthentication, SessionAuthentication])
 def my_events(request):
     user = request.user
-    # Получаем все мероприятия, где organizer == текущий пользователь
     qs = Event.objects.filter(organizer=user).order_by('-created_at')
-    
     serializer = EventSerializer(qs, many=True, context={'request': request})
     return Response(serializer.data, status=200)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_notification(request, pk):
+    try:
+        notification = Notification.objects.get(pk=pk, user=request.user)
+    except Notification.DoesNotExist:
+        return Response({"error": "Уведомление не найдено"}, status=status.HTTP_404_NOT_FOUND)
+
+    notification.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+

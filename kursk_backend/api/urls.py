@@ -10,7 +10,7 @@ from .views import (
     list_user_activity, add_user_activity, verify_email, login_user,
     request_password_reset, confirm_password_reset, check_user_exists,
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
-    get_latest_comment, event_detail, add_event_photos, delete_event, update_event_preview, my_events
+    get_latest_comment, event_detail, add_event_photos, delete_event, update_event_preview, my_events, delete_notification
 )
 
 urlpatterns = [
@@ -65,6 +65,7 @@ urlpatterns = [
     # Уведомления
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),
+    path('notifications/<int:pk>/delete/', delete_notification, name='delete_notification'),
 
 
     # Активность пользователя

@@ -1,22 +1,27 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Django
+# Django-specific
 *.log
 *.sqlite3
 db.sqlite3
+
+# Media and static files (keep templates!)
 media/
 staticfiles/
 *.pot
 *.pyc
 
-# Visual Studio Code
+# Do NOT ignore templates!
+# templates/  <-- НЕ добавлять!
+
+# VS Code
 .vscode/
 .history/
 
-# Environments
+# Virtual Environments
 .env
 .venv/
 venv/
@@ -41,10 +46,12 @@ dmypy.json
 pytestdebug.log
 
 # Jupyter Notebook
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-# Other files
-*.DS_Store
+# Packaging
 *.egg-info/
 dist/
 build/
+
+# OS-specific
+*.DS_Store
