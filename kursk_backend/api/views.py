@@ -1335,7 +1335,6 @@ def my_events(request):
     serializer = EventSerializer(qs, many=True, context={'request': request})
     return Response(serializer.data, status=200)
 
-
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_notification(request, pk):
@@ -1347,3 +1346,22 @@ def delete_notification(request, pk):
     notification.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+from .models import FCMToken
+from .serializers import FCMTokenSerializer
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def register_fcm_token(request):
+    token = request.data.get('token')
+    if not token:
+        return Response({'error': 'Token is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    fcm_token, created = FCMToken.objects.get_or_create(
+        user=request.user,
+        defaults={'token': token}
+    )
+    if not created:
+        fcm_token.token = token
+        fcm_token.save()
+
+    serializer = FCMTokenSerializer(fcm_token)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)

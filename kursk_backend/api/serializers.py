@@ -1,4 +1,5 @@
 import logging
+from .models import FCMToken
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType  # Добавлен импорт
 from .models import (
@@ -302,3 +303,8 @@ class UserActivitySerializer(serializers.ModelSerializer):
     class Meta:
         model = UserActivity
         fields = '__all__'
+
+class FCMTokenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FCMToken
+        fields = ['id', 'user', 'token', 'created_at', 'updated_at']

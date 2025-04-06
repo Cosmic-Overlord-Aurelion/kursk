@@ -310,3 +310,16 @@ class EventView(models.Model):
     def __str__(self):
         return f"{self.user.username} viewed {self.event.title}"
 
+User = get_user_model()
+
+class FCMToken(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='fcm_tokens')
+    token = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'fcm_tokens'
+
+    def __str__(self):
+        return f"FCM Token for {self.user.username}"

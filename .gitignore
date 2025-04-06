@@ -8,14 +8,13 @@ __pycache__/
 *.sqlite3
 db.sqlite3
 
-# Media and static files (keep templates!)
-media/
+# Firebase credentials
+firebase-credentials.json
+
+# Static files (но не media)
 staticfiles/
 *.pot
 *.pyc
-
-# Do NOT ignore templates!
-# templates/  <-- НЕ добавлять!
 
 # VS Code
 .vscode/
@@ -55,3 +54,6 @@ build/
 
 # OS-specific
 *.DS_Store
+
+# 🟢 Разрешаем media
+!media/
