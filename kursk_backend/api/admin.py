@@ -59,32 +59,38 @@ admin.site.register(Message)
 admin.site.register(Place)
 admin.site.register(PlaceRating)
 
-# Кастомные действия для модели Event
+from .tasks import send_email_task, send_push_notification_task  # <-- Добавим это
+# остальной импорт остаётся прежним
+
+from .services import notify_user, send_event_email
+
 def approve_events(modeladmin, request, queryset):
     for event in queryset:
         if event.status != 'approved':
             event.status = 'approved'
             event.save()
 
-            # Отправка email уведомления об одобрении
-            send_mail(
-                subject="Мероприятие одобрено",
-                message=f"Поздравляем! Ваше мероприятие '{event.title}' было одобрено.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[event.organizer.email],
-                fail_silently=True,
-            )
-            # Создаём уведомление, чтобы пользователь видел в приложении
-            Notification.objects.create(
+            send_event_email(
                 user=event.organizer,
-                type='event_approved',
+                subject="Мероприятие одобрено",
+                body=f"Поздравляем! Ваше мероприятие '{event.title}' было одобрено."
+            )
+
+            notify_user(
+                user=event.organizer,
+                notif_type='event_approved',
                 message=f"Ваше мероприятие «{event.title}» было одобрено администрацией!",
                 entity_type='event',
                 entity_id=event.id,
+                title="Мероприятие одобрено",
+                body=f"Ваше мероприятие «{event.title}» одобрено и теперь доступно другим пользователям!",
+                data={
+                    'event_id': str(event.id),
+                    'type': 'event_approved'
+                }
             )
-    modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
 
-approve_events.short_description = "Одобрить выбранные мероприятия"
+    modeladmin.message_user(request, "Выбранные мероприятия были одобрены.")
 
 def reject_events(modeladmin, request, queryset):
     for event in queryset:
@@ -92,25 +98,28 @@ def reject_events(modeladmin, request, queryset):
             event.status = 'rejected'
             event.save()
 
-            # Отправка email уведомления об отказе
-            send_mail(
-                subject="Мероприятие отклонено",
-                message=f"К сожалению, ваше мероприятие '{event.title}' было отклонено.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[event.organizer.email],
-                fail_silently=True,
-            )
-            # Создаём уведомление, чтобы пользователь видел в приложении
-            Notification.objects.create(
+            send_event_email(
                 user=event.organizer,
-                type='event_rejected',
+                subject="Мероприятие отклонено",
+                body=f"К сожалению, ваше мероприятие '{event.title}' было отклонено."
+            )
+
+            notify_user(
+                user=event.organizer,
+                notif_type='event_rejected',
                 message=f"К сожалению, ваше мероприятие «{event.title}» было отклонено администрацией.",
                 entity_type='event',
                 entity_id=event.id,
+                title="Мероприятие отклонено",
+                body=f"Мероприятие «{event.title}» было отклонено. Проверьте требования и попробуйте снова.",
+                data={
+                    'event_id': str(event.id),
+                    'type': 'event_rejected'
+                }
             )
+
     modeladmin.message_user(request, "Выбранные мероприятия были отклонены.")
 
-reject_events.short_description = "Отклонить выбранные мероприятия"
 
 # Inline для загрузки нескольких фото к событию
 class EventPhotoInline(admin.TabularInline):

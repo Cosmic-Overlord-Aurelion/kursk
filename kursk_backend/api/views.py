@@ -537,6 +537,8 @@ def accept_friend(request):
     return Response(FriendshipSerializer(fr).data, status=200)
 
 
+from rest_framework.response import Response
+
 @api_view(['DELETE'])
 def remove_friend(request):
     friendship_id = request.data.get('friendship_id')
@@ -554,7 +556,8 @@ def remove_friend(request):
             return Response({'error': 'Не найдено'}, status=404)
 
     fr.delete()
-    return Response({'message': 'Удалено'}, status=204)
+    return Response(status=204)  # ✅ Убираем тело ответа
+
 
 @api_view(['GET'])
 def list_messages(request):
@@ -667,63 +670,49 @@ def list_events(request):
     serializer = EventSerializer(qs, many=True)
     return Response(serializer.data, status=200)
 
-logger = logging.getLogger(__name__)
+from fcm import send_push_if_allowed
 
+from .tasks import send_email_task, send_push_notification_task
+from .services import notify_user, send_event_email
+logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_event(request):
-
     serializer = EventSerializer(data=request.data, context={'request': request})
-
-    # Проверка валидации
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # Сохраняем мероприятие со статусом 'pending' и организатором == текущий user
     event = serializer.save(status='pending', organizer=request.user)
 
-    # -- 1. Отправляем email в отдельном потоке
-    def _send_email_about_pending_event(user_email, event_title):
-        subject = f"Вы подали мероприятие: {event_title}"
-        body = (
-            f"Здравствуйте! Ваше мероприятие «{event_title}» отправлено на модерацию.\n\n"
-            "Ожидайте, когда администратор его рассмотрит. "
-            "После модерации вы получите новое уведомление."
-        )
-        try:
-            send_mail(
-                subject=subject,
-                message=body,
-                from_email=settings.DEFAULT_FROM_EMAIL,  # У вас в settings.py
-                recipient_list=[user_email],
-                fail_silently=True,  # Чтобы не ронять процесс при ошибках
-            )
-        except Exception as e:
-            logger.error(f"[create_event] Ошибка при отправке email: {e}")
-
-    threading.Thread(
-        target=_send_email_about_pending_event,
-        args=(request.user.email, event.title)
-    ).start()
-
-    # -- 2. Создаём уведомление
-    Notification.objects.create(
+    send_event_email(
         user=request.user,
-        type='event_submitted',  # Произвольный тип, чтобы различать типы уведомлений
-        message=(
-            f"Ваше мероприятие '{event.title}' отправлено на модерацию. "
-            "Статус: 'pending'. Ожидайте результатов проверки."
-        ),
-        entity_type='event',  
-        entity_id=event.id
+        subject=f"Вы подали мероприятие: {event.title}",
+        body=(
+            f"Здравствуйте! Ваше мероприятие «{event.title}» отправлено на модерацию.\n\n"
+            "Ожидайте, когда администратор его рассмотрит. После модерации вы получите новое уведомление."
+        )
     )
 
-    # -- 3. Возвращаем ответ
+    notify_user(
+        user=request.user,
+        notif_type='event_submitted',
+        message=f"Ваше мероприятие '{event.title}' отправлено на модерацию. Ожидайте решения администрации.",
+        entity_type='event',
+        entity_id=event.id,
+        title="Мероприятие отправлено",
+        body=f"Ваше мероприятие «{event.title}» отправлено на модерацию",
+        data={
+            'event_id': str(event.id),
+            'type': 'event_submitted'
+        }
+    )
+
     return Response(
         EventSerializer(event, context={'request': request}).data,
         status=status.HTTP_201_CREATED
     )
+
 
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
@@ -741,8 +730,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
-
-logger = logging.getLogger(__name__)
+from fcm import send_push_if_allowed
 
 
 @api_view(['POST', 'DELETE'])
@@ -755,12 +743,9 @@ def register_for_event(request, pk):
         return Response({"error": "Мероприятие не найдено"}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'POST':
-        # Проверка, зарегистрирован ли уже
-        already_registered = EventRegistration.objects.filter(event=event, user=request.user).exists()
-        if already_registered:
+        if EventRegistration.objects.filter(event=event, user=request.user).exists():
             return Response({"error": "Вы уже зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Проверка лимита
         if event.max_participants and event.max_participants > 0:
             current_count = EventRegistration.objects.filter(event=event).count()
             if current_count >= event.max_participants:
@@ -768,55 +753,70 @@ def register_for_event(request, pk):
                     "error": "Достигнут лимит участников для этого мероприятия."
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Данные
-        data = {
+        serializer = EventRegistrationSerializer(data={
             'event': pk,
             'user': request.user.id,
             'registered_at': timezone.now()
-        }
+        })
 
-        serializer = EventRegistrationSerializer(data=data)
         if serializer.is_valid():
             registration = serializer.save()
 
-            # 🔔 Уведомление организатору
             if request.user != event.organizer:
-                Notification.objects.create(
+                notify_user(
                     user=event.organizer,
-                    type='event_joined',
+                    notif_type='event_joined',
                     message=f"{request.user.username} записался на ваше мероприятие «{event.title}»",
                     entity_type='event',
                     entity_id=event.id,
+                    title="Новая регистрация",
+                    body=f"{request.user.username} записался на ваше мероприятие «{event.title}»",
+                    data={
+                        'event_id': str(event.id),
+                        'type': 'event_joined'
+                    }
                 )
 
-            # Отправка email
-            threading.Thread(
-                target=send_event_registration_email,
-                args=(request.user, event)
-            ).start()
+            send_event_email(
+                user=request.user,
+                subject=f"Регистрация на мероприятие «{event.title}»",
+                body=(
+                    f"Вы успешно зарегистрировались на мероприятие: {event.title}.\n"
+                    f"Дата: {event.start_datetime.strftime('%d.%m.%Y %H:%M') if event.start_datetime else 'не указана'}\n"
+                    f"Организатор: {event.organizer.username}"
+                )
+            )
 
             return Response(
                 EventRegistrationSerializer(registration).data,
                 status=status.HTTP_201_CREATED
             )
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     elif request.method == 'DELETE':
-        # Отмена участия
         registration = EventRegistration.objects.filter(event=event, user=request.user).first()
         if not registration:
             return Response({"error": "Вы не зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
 
         registration.delete()
+        event.participants_count = F('participants_count') - 1
+        event.save(update_fields=['participants_count'])
+        event.refresh_from_db()
 
-        # 🔔 Уведомление организатору о выходе
         if request.user != event.organizer:
-            Notification.objects.create(
+            notify_user(
                 user=event.organizer,
-                type='event_left',
+                notif_type='event_left',
                 message=f"{request.user.username} отменил участие в мероприятии «{event.title}»",
                 entity_type='event',
                 entity_id=event.id,
+                title="Отмена участия",
+                body=f"{request.user.username} отменил участие в мероприятии «{event.title}»",
+                data={
+                    'event_id': str(event.id),
+                    'type': 'event_left'
+                }
             )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -899,6 +899,9 @@ def approve_place(request, pk):
     place_obj.save()
     return Response({'message': 'Place approved'}, status=200)
 
+from fcm import send_push_if_allowed
+from api.services import notify_user
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_comment(request):
@@ -909,40 +912,45 @@ def create_comment(request):
     if serializer.is_valid():
         comment = serializer.save()
 
-        # 🔔 Уведомления только для мероприятий
         if comment.content_type.model == 'event':
-            from .models import Event, Notification
+            from .models import Event
 
             try:
                 event = Event.objects.get(id=comment.object_id)
             except Event.DoesNotExist:
                 pass
             else:
-                # Если корневой комментарий, уведомляем организатора события
                 if not comment.parent_comment and request.user != event.organizer:
-                    Notification.objects.create(
+                    notify_user(
                         user=event.organizer,
-                        type='event_comment',
+                        notif_type='event_comment',
                         message=f"{request.user.username} оставил комментарий к вашему мероприятию '{event.title}'",
                         entity_type='event',
                         entity_id=event.id,
+                        title='Новый комментарий',
+                        body=f"{request.user.username} прокомментировал «{event.title}»",
+                        data={'event_id': str(event.id), 'type': 'event_comment'}
                     )
-                # Если это ответ на другой комментарий
+
                 elif comment.parent_comment and request.user != comment.parent_comment.user:
-                    Notification.objects.create(
+                    notify_user(
                         user=comment.parent_comment.user,
-                        type='event_comment_reply',
+                        notif_type='event_comment_reply',
                         message=f"{request.user.username} ответил на ваш комментарий в мероприятии '{event.title}'",
                         entity_type='event',
                         entity_id=event.id,
+                        title='Ответ на комментарий',
+                        body=f"{request.user.username} ответил вам в «{event.title}»",
+                        data={'event_id': str(event.id), 'type': 'event_comment_reply'}
                     )
 
         return Response(
             CommentSerializer(comment, context={'request': request}).data,
-            status=status.HTTP_201_CREATED,
-            content_type="application/json"
+            status=status.HTTP_201_CREATED
         )
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
@@ -1014,7 +1022,7 @@ def get_latest_comment(request, news_id):
     except Exception as e:
         return Response({"error": str(e)}, status=400)
     
-from .models import CommentLike, Notification  # добавили Notification
+from .models import CommentLike, Notification 
 from django.contrib.contenttypes.models import ContentType
 
 @api_view(['POST'])
@@ -1035,14 +1043,19 @@ def toggle_comment_like(request, comment_id):
         message = "Лайк поставлен"
         liked = True
 
-        # Создание уведомления, если пользователь лайкнул чужой комментарий
         if comment.user != request.user:
-            Notification.objects.create(
+            notify_user(
                 user=comment.user,
-                type='comment_liked',
+                notif_type='comment_liked',
                 message=f"Пользователю {request.user.username} понравился ваш комментарий: «{comment.content[:50]}»",
                 entity_type=comment.content_type.model,
                 entity_id=comment.object_id,
+                title="Ваш комментарий понравился",
+                body=f"{request.user.username} лайкнул ваш комментарий",
+                data={
+                    "type": "comment_liked",
+                    "comment_id": str(comment.id)
+                }
             )
 
     current_likes = comment.comment_likes.count()
@@ -1080,7 +1093,6 @@ def update_comment(request, comment_id):
     comment.save(update_fields=['content'])
     logger.debug(f"Comment {comment_id} updated with new content: {new_content}")
 
-    # Передаём контекст с request в сериализатор
     ser = CommentSerializer(comment, context={'request': request})
     logger.debug(f"Serialized comment data: {ser.data}")
     return Response(ser.data, status=200)
@@ -1345,23 +1357,75 @@ def delete_notification(request, pk):
 
     notification.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
-
 from .models import FCMToken
 from .serializers import FCMTokenSerializer
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def register_fcm_token(request):
-    token = request.data.get('token')
-    if not token:
-        return Response({'error': 'Token is required'}, status=status.HTTP_400_BAD_REQUEST)
+    token_value = request.data.get('token')
 
-    fcm_token, created = FCMToken.objects.get_or_create(
-        user=request.user,
-        defaults={'token': token}
+    if not token_value:
+        return Response({'error': 'FCM токен не предоставлен'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        # Если уже существует такой token у кого-то — удалим его
+        FCMToken.objects.filter(token=token_value).delete()
+
+        # Обновляем или создаём токен для текущего пользователя
+        fcm_token, _ = FCMToken.objects.update_or_create(
+            user=request.user,
+            defaults={'token': token_value}
+        )
+
+        serializer = FCMTokenSerializer(fcm_token)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'Ошибка при регистрации токена: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+from .models import PushNotificationSetting
+from .serializers import PushNotificationSettingSerializer
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def update_push_settings(request):
+    """
+    Обновление настроек push-уведомлений для текущего пользователя.
+    """
+    user = request.user
+    settings, _ = PushNotificationSetting.objects.get_or_create(user=user)
+
+    serializer = PushNotificationSettingSerializer(settings, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"message": "Настройки обновлены"}, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_push_settings(request):
+
+    user = request.user
+    settings, _ = PushNotificationSetting.objects.get_or_create(user=user)
+    serializer = PushNotificationSettingSerializer(settings)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_user_friendships(request):
+    filter_type = request.query_params.get('filter')  # 'pending', 'accepted', или None
+
+    # Получаем все связи, в которых участвует текущий пользователь
+    qs = Friendship.objects.filter(
+        Q(user=request.user) | Q(friend=request.user)
     )
-    if not created:
-        fcm_token.token = token
-        fcm_token.save()
 
-    serializer = FCMTokenSerializer(fcm_token)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    # Фильтрация по типу связи
+    if filter_type == 'pending':
+        # Только входящие заявки (где текущий user — это friend)
+        qs = qs.filter(status='pending', friend=request.user)
+    elif filter_type == 'accepted':
+        qs = qs.filter(status='accepted')
+
+    # Сериализация и ответ
+    serializer = FriendshipSerializer(qs, many=True)
+    return Response(serializer.data, status=200)

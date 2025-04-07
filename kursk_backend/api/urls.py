@@ -11,10 +11,12 @@ from .views import (
     request_password_reset, confirm_password_reset, check_user_exists,
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
     get_latest_comment, event_detail, add_event_photos, delete_event, update_event_preview, 
-    my_events, delete_notification, register_fcm_token
+    my_events, delete_notification, register_fcm_token, update_push_settings, get_push_settings,
+    list_user_friendships
 )
 
 urlpatterns = [
+    path('register_fcm_token/', register_fcm_token, name='register_fcm_token'),
     path('register/', register_user, name='register_user'),
     path('users/', list_users, name='list_users'),
     path('users/<int:pk>/', user_detail, name='user_detail'),
@@ -33,6 +35,7 @@ urlpatterns = [
     path('friendships/add/', add_friend, name='add_friend'),
     path('friendships/accept/', accept_friend, name='accept_friend'),
     path('friendships/remove/', remove_friend, name='remove_friend'),
+    path('list_user_friendships/', list_user_friendships, name='list_user_friendships'),
 
     # Сообщения
     path('messages/', list_messages, name='list_messages'),
@@ -67,8 +70,9 @@ urlpatterns = [
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),
     path('notifications/<int:pk>/delete/', delete_notification, name='delete_notification'),
-    path('api/register_fcm_token/', register_fcm_token, name='register_fcm_token'),
-
+    path('update_push_settings/', update_push_settings, name='update_push_settings'),
+     path("get_push_settings/", get_push_settings, name="get_push_settings"),
+     
     # Активность пользователя
     path('activity/', list_user_activity, name='list_user_activity'),
     path('activity/add/', add_user_activity, name='add_user_activity'),

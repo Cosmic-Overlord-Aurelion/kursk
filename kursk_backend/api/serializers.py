@@ -1,5 +1,5 @@
 import logging
-from .models import FCMToken
+from .models import FCMToken, PushNotificationSetting
 from rest_framework import serializers
 from django.contrib.contenttypes.models import ContentType  # Добавлен импорт
 from .models import (
@@ -37,6 +37,9 @@ class UserSerializer(serializers.ModelSerializer):
         return representation
 
 class FriendshipSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    friend = UserSerializer(read_only=True)
+
     class Meta:
         model = Friendship
         fields = '__all__'
@@ -308,3 +311,8 @@ class FCMTokenSerializer(serializers.ModelSerializer):
     class Meta:
         model = FCMToken
         fields = ['id', 'user', 'token', 'created_at', 'updated_at']
+
+class PushNotificationSettingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushNotificationSetting
+        fields = ['events', 'moderation', 'likes_comments']

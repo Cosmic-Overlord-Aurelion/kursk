@@ -2,11 +2,11 @@ Django>=5.0,<5.2
 djangorestframework>=3.14,<3.15
 djangorestframework-simplejwt>=5.2,<5.3
 django-cors-headers>=4.2,<4.3
-Pillow>=10.0,<10.1  # Для работы с ImageField (аватары, медиафайлы)
-gunicorn>=21.0,<22.0  # Если планируете развертывать сервер (не обязателен для локальной разработки)
-whitenoise>=6.5,<6.6  # Для статики (если нужно)
-
-# Оптимизировано для Python 3.10+
-drf-yasg>=1.21,<1.22  # Документация Swagger/OpenAPI
-django-filter>=24.3  # Авто-обновление на последнюю стабильную версию
-firebase-admin==6.5.0
+Pillow>=10.0,<10.1           # Для работы с ImageField (аватары, медиафайлы)
+gunicorn>=21.0,<22.0          # Если планируете развертывание сервера
+whitenoise>=6.5,<6.6          # Для обслуживания статики
+drf-yasg>=1.21,<1.22          # Документация Swagger/OpenAPI
+django-filter>=24.3          # Фильтрация запросов в DRF
+firebase-admin==6.5.0         # Работа с Firebase для push-уведомлений
+celery>=5.5,<5.6             # Асинхронные задачи
+django-celery-beat>=2.5,<2.6   # Планировщик задач (Beat)
