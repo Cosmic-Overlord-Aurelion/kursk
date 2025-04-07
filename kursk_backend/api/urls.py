@@ -64,8 +64,8 @@ urlpatterns = [
     path('comments/<int:comment_id>/delete/', delete_comment, name='delete_comment'),
     path('comments/<int:comment_id>/update/', update_comment, name='update_comment'),
     path('comments/<int:comment_id>/like_toggle/', toggle_comment_like, name='toggle_comment_like'),
-    path('comments/latest/<int:news_id>/', get_latest_comment, name='get_latest_comment'),
-
+    path('comments/latest/<int:entity_id>/', get_latest_comment, name='get_latest_comment'),  # Обновлено зд
+    
     # Уведомления
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),

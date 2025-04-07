@@ -186,3 +186,15 @@ CELERY_RESULT_SERIALIZER = 'json'
 
 TIME_ZONE = 'Europe/Moscow'
 USE_TZ = True
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': 'redis://localhost:6379/1',  # База 1 для кэша
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
+    }
+}
+
+CACHE_TTL = 60 * 15  # 15 минут

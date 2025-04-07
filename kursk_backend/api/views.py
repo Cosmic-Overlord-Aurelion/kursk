@@ -5,7 +5,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.core.mail import send_mail
 import random
 import threading
-
+from django.core.cache import cache
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -356,11 +356,23 @@ from .serializers import NewsListSerializer, NewsDetailSerializer
 
 @api_view(['GET'])
 def news_list(request):
-    print("DEBUG: news_list called")
-    print("DEBUG: Request headers:", dict(request.headers))
-    qs = News.objects.prefetch_related('photos').all()
-    sort_param = request.GET.get('sort')
+    sort_param = request.GET.get('sort', 'default')
+    cache_key = f'news_list_{sort_param}'
+    cache_time_key = f'{cache_key}_time'
+    cached_data = cache.get(cache_key)
+    last_cached_time = cache.get(cache_time_key)
     
+    # Проверяем, есть ли обновления новее кэша
+    try:
+        last_update = News.objects.latest('updated_at').updated_at
+    except News.DoesNotExist:
+        last_update = None
+    
+    if cached_data is not None and last_cached_time and (not last_update or last_cached_time >= last_update):
+        logger.info(f"Returning cached data for news_list with sort={sort_param}")
+        return Response(cached_data, status=200)
+    
+    qs = News.objects.prefetch_related('photos').all()
     if sort_param == 'date_asc':
         qs = qs.order_by('created_at')
     elif sort_param == 'date_desc':
@@ -392,10 +404,11 @@ def news_list(request):
         qs = qs.order_by('-created_at')
     
     ser = NewsListSerializer(qs, many=True)
-    print("DEBUG: news_list response data:", ser.data)
+    now = timezone.now()
+    cache.set(cache_key, ser.data, 60 * 15)
+    cache.set(cache_time_key, now)
+    logger.info(f"Cached news_list with sort={sort_param}")
     return Response(ser.data, status=200)
-
-
 
 @api_view(['POST'])
 def create_news(request):
@@ -604,6 +617,9 @@ logger = logging.getLogger(__name__)
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def delete_comment(request, comment_id):
+    from django.core.cache import cache
+    from .models import Event
+
     logger.debug(f"Received delete_comment request for comment_id={comment_id}, user={request.user}")
     
     try:
@@ -614,19 +630,40 @@ def delete_comment(request, comment_id):
 
     if comment.is_deleted:
         logger.debug(f"Comment with id={comment_id} is already deleted (is_deleted=True)")
-        return Response(status=204)  # Убираем тело ответа
+        return Response(status=204)
 
     if comment.user != request.user and not request.user.is_superuser:
         logger.warning(f"User {request.user} does not have permission to delete comment {comment_id}")
         return Response({"detail": "Нет прав на удаление"}, status=403)
 
+    # Помечаем как удалённый
     comment.is_deleted = True
     comment.deleted_at = timezone.now()
     comment.deleted_by = request.user
     comment.save(update_fields=['is_deleted', 'deleted_at', 'deleted_by'])
     logger.debug(f"Comment {comment_id} marked as deleted by user {request.user}")
 
+    # 🔄 Обновляем updated_at у мероприятия и сбрасываем кэш
+    if comment.content_type.model == 'event':
+        try:
+            event = Event.objects.get(id=comment.object_id)
+            event.updated_at = timezone.now()
+            event.save(update_fields=['updated_at'])
+            # Сбрасываем кэш для комментариев события
+            cache_key = f'comments_list_event_{comment.object_id}'
+            cache.delete(cache_key)
+            logger.info(f"Cache cleared for {cache_key}")
+        except Event.DoesNotExist:
+            pass
+
+    # ❌ Сбрасываем кэш комментариев к новости
+    elif comment.content_type.model == 'news':
+        cache_key = f'comments_list_{comment.object_id}'
+        cache.delete(cache_key)
+        logger.info(f"Cache cleared for {cache_key}")
+
     return Response(status=204)
+
 
 
 from datetime import timedelta
@@ -638,41 +675,48 @@ logger = logging.getLogger(__name__)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def list_events(request):
-    filter_param = request.GET.get('filter')
+    filter_param = request.GET.get('filter', 'default')
+    cache_key = f'events_list_{filter_param}'
+    cache_time_key = f'{cache_key}_time'
+    cached_data = cache.get(cache_key)
+    last_cached_time = cache.get(cache_time_key)
+    
+    # Проверяем последнее обновление событий
+    try:
+        last_update = Event.objects.latest('updated_at').updated_at
+    except Event.DoesNotExist:
+        last_update = None
+    
+    if cached_data is not None and last_cached_time and (not last_update or last_cached_time >= last_update):
+        logger.info(f"Returning cached data for events_list with filter={filter_param}")
+        return Response(cached_data, status=200)
+    
     now = timezone.now()
-    logger.debug(f"Current time: {now}, Filter: {filter_param}")
     qs = Event.objects.filter(status="approved")
-    logger.debug(f"Initial queryset count: {qs.count()}")
-
     if filter_param == "popular":
         qs = qs.annotate(registrations_count=Count('registrations')).order_by('-registrations_count')
     elif filter_param == "upcoming":
         qs = qs.filter(
             end_datetime__gte=now,
-            start_datetime__lte=now + timedelta(weeks=3)  
+            start_datetime__lte=now + timedelta(weeks=3)
         ).order_by('start_datetime')
     elif filter_param == "planned":
         qs = qs.filter(
-            end_datetime__gte=now,  
-            start_datetime__gte=now + timedelta(weeks=3),  
-            start_datetime__lte=now + timedelta(weeks=10)  
+            end_datetime__gte=now,
+            start_datetime__gte=now + timedelta(weeks=3),
+            start_datetime__lte=now + timedelta(weeks=10)
         ).order_by('start_datetime')
     else:
         qs = qs.order_by('-created_at')
-
-    logger.debug(f"Filtered queryset count: {qs.count()}")
-    for event in qs:
-        logger.debug(
-            f"Event: {event.title}, Start: {event.start_datetime}, "
-            f"End: {event.end_datetime}, Registrations: {getattr(event, 'registrations_count', 'N/A')}"
-        )
-
+    
     serializer = EventSerializer(qs, many=True)
+    now = timezone.now()
+    cache.set(cache_key, serializer.data, 60 * 5)  
+    cache.set(cache_time_key, now)
+    logger.info(f"Cached events_list with filter={filter_param}")
     return Response(serializer.data, status=200)
 
-from fcm import send_push_if_allowed
 
-from .tasks import send_email_task, send_push_notification_task
 from .services import notify_user, send_event_email
 logger = logging.getLogger(__name__)
 
@@ -764,7 +808,8 @@ def register_for_event(request, pk):
 
             # Обновляем количество участников
             event.participants_count = F('participants_count') + 1
-            event.save(update_fields=['participants_count'])
+            event.updated_at = timezone.now()  # обновляем для сброса кеша
+            event.save(update_fields=['participants_count', 'updated_at'])
             event.refresh_from_db()
 
             if request.user != event.organizer:
@@ -808,7 +853,8 @@ def register_for_event(request, pk):
 
         # Уменьшаем количество участников
         event.participants_count = F('participants_count') - 1
-        event.save(update_fields=['participants_count'])
+        event.updated_at = timezone.now()
+        event.save(update_fields=['participants_count', 'updated_at'])
         event.refresh_from_db()
 
         if request.user != event.organizer:
@@ -906,27 +952,31 @@ def approve_place(request, pk):
     place_obj.save()
     return Response({'message': 'Place approved'}, status=200)
 
-from fcm import send_push_if_allowed
-from api.services import notify_user
 
+from api.services import notify_user
+from django.core.cache import cache
+from .models import Event, News
+from django.contrib.contenttypes.models import ContentType
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_comment(request):
+    # Копируем данные и добавляем время создания
     data = request.data.copy()
     data['created_at'] = timezone.now()
 
+    # Сериализация и сохранение комментария
     serializer = CommentSerializer(data=data, context={'request': request})
     if serializer.is_valid():
         comment = serializer.save()
 
+        # --- Обработка комментариев к мероприятиям ---
         if comment.content_type.model == 'event':
-            from .models import Event
-
             try:
                 event = Event.objects.get(id=comment.object_id)
-            except Event.DoesNotExist:
-                pass
-            else:
+                event.updated_at = timezone.now()
+                event.save(update_fields=['updated_at'])
+
+                # Уведомление организатору, если это не ответ и не его комментарий
                 if not comment.parent_comment and request.user != event.organizer:
                     notify_user(
                         user=event.organizer,
@@ -938,7 +988,7 @@ def create_comment(request):
                         body=f"{request.user.username} прокомментировал «{event.title}»",
                         data={'event_id': str(event.id), 'type': 'event_comment'}
                     )
-
+                # Уведомление автору родительского комментария, если это ответ
                 elif comment.parent_comment and request.user != comment.parent_comment.user:
                     notify_user(
                         user=comment.parent_comment.user,
@@ -950,24 +1000,36 @@ def create_comment(request):
                         body=f"{request.user.username} ответил вам в «{event.title}»",
                         data={'event_id': str(event.id), 'type': 'event_comment_reply'}
                     )
+            except Event.DoesNotExist:
+                pass
 
-        return Response(
-            CommentSerializer(comment, context={'request': request}).data,
-            status=status.HTTP_201_CREATED
-        )
+        # --- Обработка комментариев к новостям ---
+        elif comment.content_type.model == 'news':
+            # Убираем очистку кэша, поскольку кэширование больше не нужно
+            # cache_key = f'comments_list_{comment.object_id}'
+            # cache.delete(cache_key)
+            pass
+
+        # Возвращаем весь список комментариев для данной сущности
+        comments = Comment.objects.filter(
+            content_type=comment.content_type,
+            object_id=comment.object_id,
+            is_deleted=False
+        ).order_by('-created_at')  # Сортировка по убыванию времени создания (сначала новые)
+
+        serialized_comments = CommentSerializer(comments, many=True, context={'request': request})
+        return Response(serialized_comments.data, status=status.HTTP_200_OK)
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.pagination import PageNumberPagination
+from django.contrib.contenttypes.models import ContentType
+from .serializers import CommentSerializer
 
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from rest_framework.pagination import PageNumberPagination
-from django.contrib.contenttypes.models import ContentType
-from .serializers import CommentSerializer
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from rest_framework.pagination import PageNumberPagination
-from django.contrib.contenttypes.models import ContentType
-from .serializers import CommentSerializer
+logger = logging.getLogger(__name__)
 
 class CommentPagination(PageNumberPagination):
     page_size = 20
@@ -975,59 +1037,67 @@ class CommentPagination(PageNumberPagination):
     max_page_size = 100
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticatedOrReadOnly])
 def list_comments(request):
-    entity_type_param = request.GET.get('entity_type')
-    entity_id_param = request.GET.get('entity_id')
+    entity_type = request.GET.get('entity_type')
+    entity_id = request.GET.get('entity_id')
 
-    qs = Comment.objects.filter(is_deleted=False)
-    qs = qs.select_related('user').prefetch_related('comment_likes', 'replies')
-
-    if entity_type_param:
+    # Фильтрация по entity_type и entity_id
+    if entity_type and entity_id:
         try:
-            ct = ContentType.objects.get(model=entity_type_param.lower())
-            qs = qs.filter(content_type=ct)
+            ct = ContentType.objects.get(model=entity_type.lower())
+            qs = Comment.objects.filter(
+                content_type=ct,
+                object_id=entity_id,
+                is_deleted=False
+            ).select_related('user')
         except ContentType.DoesNotExist:
-            return Response({"error": "Invalid entity_type"}, status=400)
-    if entity_id_param:
-        qs = qs.filter(object_id=entity_id_param)
+            logger.warning(f"Invalid entity_type: {entity_type}")
+            return Response({"error": "Неверный entity_type"}, status=400)
+    else:
+        qs = Comment.objects.filter(is_deleted=False).select_related('user')
 
-    # Фильтруем только корневые комментарии
-    qs = qs.filter(parent_comment_id__isnull=True).order_by('-created_at')
-
-    # Пагинация
+    # Применяем пагинацию
     paginator = CommentPagination()
-    paginated_qs = paginator.paginate_queryset(qs, request)
+    page = paginator.paginate_queryset(qs, request)
+    serializer = CommentSerializer(page, many=True, context={'request': request})
 
-    # Сериализация с учетом вложенности через CommentSerializer
-    serializer = CommentSerializer(paginated_qs, many=True, context={'request': request})
     return paginator.get_paginated_response(serializer.data)
+
 
 import logging
 logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
-def get_latest_comment(request, news_id):
+def get_latest_comment(request, entity_id):
+    entity_type = request.GET.get('entity_type', 'news')  # По умолчанию 'news', но можно передать 'event'
     try:
-        news = News.objects.get(pk=news_id)
-    except News.DoesNotExist:
-        return Response({"error": "Новость не найдена"}, status=404)
-    try:
-        ct = ContentType.objects.get(model='news')
-        comments = Comment.objects.filter(
+        ct = ContentType.objects.get(model=entity_type.lower())
+
+        # Получаем все комментарии по сущности
+        comments_qs = Comment.objects.filter(
             content_type=ct,
-            object_id=news_id,
+            object_id=entity_id,
             is_deleted=False
-        ).order_by('-created_at')
-        if not comments.exists():
-            return Response({"message": "Комментариев пока нет"}, status=200)
-        serializer = CommentSerializer(comments, many=True, context={'request': request})
-        return Response(serializer.data, status=200)
+        )
+
+        # Считаем общее количество
+        count = comments_qs.count()
+
+        # Получаем последний комментарий
+        latest_comment = comments_qs.order_by('-created_at').first()
+
+        if not latest_comment:
+            return Response({"comment": None, "count": 0}, status=200)
+
+        serializer = CommentSerializer(latest_comment, context={'request': request})
+        return Response({"comment": serializer.data, "count": count}, status=200)
+
     except ContentType.DoesNotExist:
         return Response({"error": "Неверный тип сущности"}, status=400)
     except Exception as e:
         return Response({"error": str(e)}, status=400)
+
     
 from .models import CommentLike, Notification 
 from django.contrib.contenttypes.models import ContentType
@@ -1050,6 +1120,7 @@ def toggle_comment_like(request, comment_id):
         message = "Лайк поставлен"
         liked = True
 
+        # Уведомление автору комментария
         if comment.user != request.user:
             notify_user(
                 user=comment.user,
@@ -1065,6 +1136,15 @@ def toggle_comment_like(request, comment_id):
                 }
             )
 
+        if comment.content_type.model == 'event':
+            from .models import Event
+            try:
+                event = Event.objects.get(id=comment.object_id)
+                event.updated_at = timezone.now()
+                event.save(update_fields=['updated_at'])
+            except Event.DoesNotExist:
+                pass
+
     current_likes = comment.comment_likes.count()
     return Response({
         "comment_id": comment_id,
@@ -1073,14 +1153,13 @@ def toggle_comment_like(request, comment_id):
         "likes_count": current_likes
     }, status=200)
 
-
-
 logger = logging.getLogger(__name__)
 
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def update_comment(request, comment_id):
     logger.debug(f"Received update_comment request for comment_id={comment_id}, user={request.user}")
+    
     try:
         comment = Comment.objects.get(pk=comment_id, is_deleted=False)
     except Comment.DoesNotExist:
@@ -1098,19 +1177,47 @@ def update_comment(request, comment_id):
 
     comment.content = new_content
     comment.save(update_fields=['content'])
-    logger.debug(f"Comment {comment_id} updated with new content: {new_content}")
 
+    # ⚠️ Обновляем updated_at у мероприятия, если комментарий связан с Event
+    if comment.content_type.model == 'event':
+        from .models import Event
+        try:
+            event = Event.objects.get(id=comment.object_id)
+            event.updated_at = timezone.now()
+            event.save(update_fields=['updated_at'])
+        except Event.DoesNotExist:
+            pass
+
+    logger.debug(f"Comment {comment_id} updated with new content: {new_content}")
     ser = CommentSerializer(comment, context={'request': request})
     logger.debug(f"Serialized comment data: {ser.data}")
     return Response(ser.data, status=200)
 
 @api_view(['GET'])
-@authentication_classes([CustomTokenAuthentication, SessionAuthentication])
-@permission_classes([IsAuthenticated])
 def list_notifications(request):
-    notifications = Notification.objects.filter(user=request.user).order_by('-created_at')
-    serializer = NotificationSerializer(notifications, many=True)
-    return Response(serializer.data)
+    user_id = request.user.id
+    cache_key = f'notifications_list_{user_id}'
+    cache_time_key = f'{cache_key}_time'
+    cached_data = cache.get(cache_key)
+    last_cached_time = cache.get(cache_time_key)
+    
+    # Проверяем последнее обновление уведомлений для пользователя
+    try:
+        last_update = Notification.objects.filter(user_id=user_id).latest('updated_at').updated_at
+    except Notification.DoesNotExist:
+        last_update = None
+    
+    if cached_data is not None and last_cached_time and (not last_update or last_cached_time >= last_update):
+        logger.info(f"Returning cached data for notifications_list for user={user_id}")
+        return Response(cached_data, status=200)
+    
+    qs = Notification.objects.filter(user_id=user_id).order_by('-created_at')
+    serializer = NotificationSerializer(qs, many=True)
+    now = timezone.now()
+    cache.set(cache_key, serializer.data, 60 * 2)  
+    cache.set(cache_time_key, now)
+    logger.info(f"Cached notifications_list for user={user_id}")
+    return Response(serializer.data, status=200)
 
 
 @api_view(['POST'])

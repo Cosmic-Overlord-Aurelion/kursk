@@ -91,11 +91,12 @@ class News(models.Model):
     full_text = models.TextField()
     author = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)  
     views_count = models.PositiveIntegerField(default=0)
     likes = models.ManyToManyField(
         User,
-        related_name='liked_news',  
-        blank=True 
+        related_name='liked_news',
+        blank=True
     )
     comments = GenericRelation('Comment')
 
@@ -228,14 +229,15 @@ class Comment(models.Model):
         related_name='deleted_comments'
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)  # Добавляем
 
     class Meta:
         db_table = 'comments'
         indexes = [
-            models.Index(fields=['content_type', 'object_id']),  # Для фильтрации по сущности
-            models.Index(fields=['parent_comment']),  # Для вложенности
-            models.Index(fields=['is_deleted']),  # Для фильтрации удалённых
-            models.Index(fields=['created_at']),  # Для сортировки
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['parent_comment']),
+            models.Index(fields=['is_deleted']),
+            models.Index(fields=['created_at']),
         ]
 
     def __str__(self):
@@ -243,17 +245,17 @@ class Comment(models.Model):
 
     @property
     def likes_count(self):
-        """Для совместимости с сериализатором и упрощения подсчёта лайков."""
         return self.comment_likes.count()
 
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey('User', on_delete=models.CASCADE) 
-    type = models.CharField(max_length=50)  
+    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    type = models.CharField(max_length=50)
     message = models.TextField(null=True, blank=True)
-    entity_type = models.CharField(max_length=20, null=True, blank=True)  
+    entity_type = models.CharField(max_length=20, null=True, blank=True)
     entity_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)  
     read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
