@@ -229,7 +229,7 @@ class CommentSerializer(serializers.ModelSerializer):
             logger.debug(f"No replies for comment {obj.id}")
             return []
         children = CommentSerializer(
-            obj.replies.filter(is_deleted=False),
+            obj.replies.filter(is_deleted=False).order_by('created_at'),  # Сортировка дочерних по времени создания
             many=True,
             context=self.context
         ).data

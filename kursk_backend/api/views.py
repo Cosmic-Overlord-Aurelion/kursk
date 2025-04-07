@@ -1028,13 +1028,7 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.pagination import PageNumberPagination
 from django.contrib.contenttypes.models import ContentType
 from .serializers import CommentSerializer
-
 logger = logging.getLogger(__name__)
-
-class CommentPagination(PageNumberPagination):
-    page_size = 20
-    page_size_query_param = 'page_size'
-    max_page_size = 100
 
 @api_view(['GET'])
 def list_comments(request):
@@ -1048,16 +1042,21 @@ def list_comments(request):
             qs = Comment.objects.filter(
                 content_type=ct,
                 object_id=entity_id,
-                is_deleted=False
-            ).select_related('user')
+                is_deleted=False,
+                parent_comment__isnull=True
+            ).select_related('user').order_by('-created_at')
         except ContentType.DoesNotExist:
             logger.warning(f"Invalid entity_type: {entity_type}")
             return Response({"error": "Неверный entity_type"}, status=400)
     else:
-        qs = Comment.objects.filter(is_deleted=False).select_related('user')
+        qs = Comment.objects.filter(
+            is_deleted=False,
+            parent_comment__isnull=True
+        ).select_related('user').order_by('-created_at')
 
-    # Применяем пагинацию
-    paginator = CommentPagination()
+    # Используем пагинацию из настроек REST_FRAMEWORK
+    paginator = PageNumberPagination()
+    paginator.page_size = request.GET.get('page_size', 10)  # Размер страницы из запроса или по умолчанию 10
     page = paginator.paginate_queryset(qs, request)
     serializer = CommentSerializer(page, many=True, context={'request': request})
 
