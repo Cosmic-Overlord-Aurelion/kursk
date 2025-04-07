@@ -139,11 +139,14 @@ class Event(models.Model):
         verbose_name="Максимальное количество участников",
         help_text="0 означает, что ограничений нет"
     )
+    participants_count = models.PositiveIntegerField(default=0)  
+
     # Постоянная связь с комментариями
     comments = GenericRelation('Comment')
 
     def __str__(self):
         return f"Event: {self.title}"
+
 
 
 class EventPhoto(models.Model):

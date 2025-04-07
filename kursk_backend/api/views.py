@@ -762,6 +762,11 @@ def register_for_event(request, pk):
         if serializer.is_valid():
             registration = serializer.save()
 
+            # Обновляем количество участников
+            event.participants_count = F('participants_count') + 1
+            event.save(update_fields=['participants_count'])
+            event.refresh_from_db()
+
             if request.user != event.organizer:
                 notify_user(
                     user=event.organizer,
@@ -800,6 +805,8 @@ def register_for_event(request, pk):
             return Response({"error": "Вы не зарегистрированы на это мероприятие"}, status=status.HTTP_400_BAD_REQUEST)
 
         registration.delete()
+
+        # Уменьшаем количество участников
         event.participants_count = F('participants_count') - 1
         event.save(update_fields=['participants_count'])
         event.refresh_from_db()
