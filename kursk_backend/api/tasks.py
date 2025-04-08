@@ -5,7 +5,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from fcm import send_push_if_allowed
-from api.models import User, Notification, EventRegistration, Event
+from api.models import User, Notification, EventRegistration, Event, Message
 
 @shared_task
 def send_email_task(subject, body, recipient_email):
@@ -18,9 +18,48 @@ def send_email_task(subject, body, recipient_email):
     )
 
 @shared_task
+def notify_message_receiver(message_id):
+    try:
+        message = Message.objects.get(id=message_id)
+        # Email-уведомление
+        send_email_task.delay(
+            subject=f"Новое сообщение от {message.from_user.username}",
+            body=message.content,
+            recipient_email=message.to_user.email
+        )
+        # Push-уведомление
+        send_push_notification_task.delay(
+            user_id=message.to_user.id,
+            notif_type='new_message',
+            title=f"Новое сообщение от {message.from_user.username}",
+            body=message.content[:100],
+            data={
+                'type': 'new_message',
+                'sender_id': str(message.from_user.id)  # Убедимся, что это строка
+            }
+        )
+        # Создаем запись в Notification
+        Notification.objects.create(
+            user=message.to_user,
+            type='new_message',
+            message=f"Новое сообщение от {message.from_user.username}",
+            entity_type='user',
+            entity_id=message.from_user.id,
+            created_at=timezone.now()
+        )
+    except Message.DoesNotExist:
+        print(f"[notify_message_receiver] Ошибка: сообщение с ID {message_id} не найдено")
+    except Exception as e:
+        print(f"[notify_message_receiver] Неизвестная ошибка для сообщения {message_id}: {str(e)}")
+
+@shared_task
 def send_push_notification_task(user_id, notif_type, title, body, data=None):
     try:
         user = User.objects.get(id=user_id)
+        if not data:
+            data = {}
+        # Логируем отправку для отладки
+        print(f"[send_push_notification_task] Отправка push для user_id={user_id}, type={notif_type}, data={data}")
         send_push_if_allowed(
             user=user,
             notif_type=notif_type,
@@ -29,7 +68,9 @@ def send_push_notification_task(user_id, notif_type, title, body, data=None):
             data=data
         )
     except User.DoesNotExist:
-        print(f"User with id {user_id} not found")
+        print(f"[send_push_notification_task] Ошибка: пользователь с ID {user_id} не найден")
+    except Exception as e:
+        print(f"[send_push_notification_task] Неизвестная ошибка для user_id={user_id}: {str(e)}")
 
 @shared_task
 def delete_old_notifications():

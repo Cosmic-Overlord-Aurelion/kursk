@@ -54,6 +54,7 @@ def send_push_if_allowed(user: User, notif_type: str, title: str, body: str, dat
         'event_rejected': 'moderation',
         'comment_liked': 'likes_comments',
         'event_reminder': 'events',
+        'new_message': 'messages',  # ✅ добавлена поддержка сообщений
     }
 
     category = category_map.get(notif_type)
@@ -83,6 +84,7 @@ def send_push_if_allowed(user: User, notif_type: str, title: str, body: str, dat
 # Сериализатор для FCM-токена
 class FcmTokenSerializer(Serializer):
     token = CharField(max_length=255)
+
 
 # API для регистрации FCM-токена
 class RegisterFcmTokenView(APIView):
@@ -116,6 +118,7 @@ class RegisterFcmTokenView(APIView):
                     {"message": "Token already registered for this user"},
                     status=status.HTTP_200_OK
                 )
+
             # Если токен новый, привязываем к пользователю
             fcm_token.user = user
             fcm_token.save()
@@ -124,6 +127,7 @@ class RegisterFcmTokenView(APIView):
                 {"message": "Token registered successfully"},
                 status=status.HTTP_201_CREATED
             )
+
         except Exception as e:
             logger.error(f"❌ Ошибка при регистрации токена {token} для {user.username}: {e}")
             return Response(

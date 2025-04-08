@@ -44,10 +44,21 @@ class FriendshipSerializer(serializers.ModelSerializer):
         model = Friendship
         fields = '__all__'
 
+
 class MessageSerializer(serializers.ModelSerializer):
+    from_user = UserSerializer(read_only=True)  # Оставляем read_only для вывода
+    to_user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())  # Принимаем ID получателя
+
     class Meta:
         model = Message
-        fields = '__all__'
+        fields = ['id', 'from_user', 'to_user', 'content', 'sent_at', 'read_at']
+
+    def validate_to_user(self, value):
+        # Дополнительная валидация получателя, если нужно
+        if not value.is_active:
+            raise serializers.ValidationError("Получатель неактивен")
+        return value
+
 
 class NewsPhotoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -315,4 +326,18 @@ class FCMTokenSerializer(serializers.ModelSerializer):
 class PushNotificationSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = PushNotificationSetting
-        fields = ['events', 'moderation', 'likes_comments']
+        fields = ['events', 'moderation', 'likes_comments', 'messages']  
+
+class ConversationSerializer(serializers.ModelSerializer):
+    user = UserSerializer(source='*')
+    last_message = serializers.SerializerMethodField()
+    unread_count = serializers.IntegerField()
+
+    class Meta:
+        model = User
+        fields = ['user', 'last_message', 'unread_count']
+
+    def get_last_message(self, obj):
+        if hasattr(obj, 'last_message_id') and obj.last_message_id:
+            return MessageSerializer(Message.objects.get(id=obj.last_message_id)).data
+        return None

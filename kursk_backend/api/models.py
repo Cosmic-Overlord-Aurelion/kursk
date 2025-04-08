@@ -68,16 +68,21 @@ class Friendship(models.Model):
     def __str__(self):
         return f"Friendship {self.user.username} - {self.friend.username} ({self.status})"
 
+from django.utils import timezone
+
 class Message(models.Model):
     id = models.AutoField(primary_key=True)
     from_user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='messages_sent')
     to_user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='messages_received')
     content = models.TextField()
-    sent_at = models.DateTimeField()
+    sent_at = models.DateTimeField(default=timezone.now)
     read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'messages'
+        indexes = [
+            models.Index(fields=['from_user', 'to_user', 'sent_at']),
+        ]
 
     def __str__(self):
         return f"Msg from {self.from_user.username} to {self.to_user.username}"
@@ -332,6 +337,7 @@ class PushNotificationSetting(models.Model):
     events = models.BooleanField(default=True)  # Уведомления о событиях
     moderation = models.BooleanField(default=True)  # Уведомления о модерации
     likes_comments = models.BooleanField(default=True)  # Уведомления о лайках и комментариях
+    messages = models.BooleanField(default=True)  # Уведомления о сообщениях <--- Добавляем
 
     def __str__(self):
         return f"Settings for {self.user.username}"
