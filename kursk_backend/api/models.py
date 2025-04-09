@@ -1,9 +1,28 @@
 from django.db import models
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.contrib.auth.models import (
+    AbstractBaseUser,
+    BaseUserManager,
+    PermissionsMixin,
+)
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.core.mail import send_mail
+import random
+import string
+import logging
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
+
+
+# Функция для генерации случайного пароля из 6 цифр
+def generate_random_password(length=6):
+    """Генерирует случайный пароль из 6 цифр."""
+    characters = string.digits  # Только цифры: 0123456789
+    return "".join(random.choice(characters) for _ in range(length))
+
 
 class UserManager(BaseUserManager):
     def create_user(self, email, username, password=None):
@@ -11,7 +30,7 @@ class UserManager(BaseUserManager):
             raise ValueError("У пользователя должен быть email")
         user = self.model(email=self.normalize_email(email), username=username)
         if password:
-            user.set_password(password)  
+            user.set_password(password)
         user.save(using=self._db)
         return user
 
@@ -21,6 +40,7 @@ class UserManager(BaseUserManager):
         user.is_superuser = True
         user.save(using=self._db)
         return user
+
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.AutoField(primary_key=True)
@@ -54,30 +74,42 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return f"{self.username} ({self.email})"
 
+
 class Friendship(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_initiated')
-    friend = models.ForeignKey('User', on_delete=models.CASCADE, related_name='friendships_received')
-    status = models.CharField(max_length=20, default='pending')
+    user = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="friendships_initiated"
+    )
+    friend = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="friendships_received"
+    )
+    status = models.CharField(max_length=20, default="pending")
     created_at = models.DateTimeField()
     accepted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = 'friendships'
+        db_table = "friendships"
 
     def __str__(self):
-        return f"Friendship {self.user.username} - {self.friend.username} ({self.status})"
+        return (
+            f"Friendship {self.user.username} - {self.friend.username} ({self.status})"
+        )
+
 
 class Message(models.Model):
     id = models.AutoField(primary_key=True)
-    from_user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='messages_sent')
-    to_user = models.ForeignKey('User', on_delete=models.CASCADE, related_name='messages_received')
+    from_user = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="messages_sent"
+    )
+    to_user = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="messages_received"
+    )
     content = models.TextField()
     sent_at = models.DateTimeField()
     read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = 'messages'
+        db_table = "messages"
 
     def __str__(self):
         return f"Msg from {self.from_user.username} to {self.to_user.username}"
@@ -85,20 +117,142 @@ class Message(models.Model):
 
 User = get_user_model()
 
+
+# Модель Moderator
+class Moderator(models.Model):
+    email = models.EmailField(unique=True)
+    status = models.CharField(
+        max_length=10,
+        choices=[("approved", "Принят"), ("rejected", "Отклонен")],
+        default="rejected",
+    )
+
+    def save(self, *args, **kwargs):
+        if self.status == "approved":
+            # Проверяем, существует ли пользователь
+            try:
+                user = User.objects.get(email=self.email)
+                # Если пользователь уже существует, просто обновляем права
+                if not user.is_superuser or not user.is_staff:
+                    user.is_superuser = True
+                    user.is_staff = True
+                    user.save()
+                    # Генерируем новый пароль, так как это новый суперюзер
+                    random_password = generate_random_password()
+                    user.set_password(random_password)
+                    user.save()
+                else:
+                    # Если пользователь уже суперюзер, используем его текущий пароль
+                    random_password = "Ваш текущий пароль"
+            except User.DoesNotExist:
+                # Если пользователя нет, создаем нового
+                random_password = generate_random_password()
+                user = User.objects.create_user(
+                    email=self.email,
+                    username=self.email.split("@")[0],
+                    password=random_password,
+                )
+                user.is_superuser = True
+                user.is_staff = True
+                user.save()
+
+            # Логируем и отправляем письмо
+            logger.info(f"Отправка письма с подтверждением на {self.email}")
+            send_mail(
+                "Одобрение запроса на права администратора",
+                f"Уважаемый(ая) пользователь,\n\n"
+                f"Мы рады сообщить, что ваш запрос на получение прав администратора был одобрен. "
+                f"Теперь вы имеете полный доступ к админ-панели для управления контентом.\n\n"
+                f"Данные для входа:\n"
+                f"- Логин: {self.email}\n"
+                f"- Пароль: {random_password}\n\n"
+                f"Если у вас возникнут вопросы, вы можете обратиться в службу поддержки по адресу dylanbob0@yandex.ru\n\n"
+                f"С уважением,\n"
+                f'Команда "Библз"',
+                "dylanbob0@yandex.ru",
+                [self.email],
+                fail_silently=False,
+            )
+            super().save(*args, **kwargs)  # Сохраняем запись в Moderator
+
+        elif self.status == "rejected":
+            # Проверяем, существует ли пользователь
+            try:
+                user = User.objects.get(email=self.email)
+                # Проверяем, был ли пользователь изначально суперюзером
+                if user.is_superuser:
+                    # Если это был суперюзер, убираем права админки
+                    user.is_superuser = False
+                    user.is_staff = False
+                    user.save()
+                # Если это обычный пользователь, ничего не делаем с ним
+            except User.DoesNotExist:
+                pass  # Пользователь не существует, ничего не делаем
+
+            # Логируем и отправляем письмо с отказом
+            logger.info(f"Отправка письма с отказом на {self.email}")
+            send_mail(
+                "Отклонение запроса на права администратора",
+                f"Уважаемый(ая) пользователь,\n\n"
+                f"Сообщаем, что ваш запрос на получение прав администратора был отклонен. "
+                f"На данный момент мы не можем предоставить вам доступ к админ-панели.\n\n"
+                f"Для получения дополнительной информации вы можете обратиться в службу поддержки по адресу dylanbob0@yandex.ru\n\n"
+                f"С уважением,\n"
+                f'Команда "Библз"',
+                "dylanbob0@yandex.ru",
+                [self.email],
+                fail_silently=False,
+            )
+            # Не сохраняем запись при создании или удаляем при изменении
+            if self.pk:  # Если запись уже была, удаляем
+                self.delete()
+
+    def delete(self, *args, **kwargs):
+        # Проверяем, существует ли пользователь
+        try:
+            user = User.objects.get(email=self.email)
+            # Проверяем, был ли пользователь изначально суперюзером
+            if user.is_superuser:
+                # Если это был суперюзер, убираем права админки
+                user.is_superuser = False
+                user.is_staff = False
+                user.save()
+            # Если это обычный пользователь, ничего не делаем с ним
+        except User.DoesNotExist:
+            pass  # Пользователь не существует, ничего не делаем
+
+        # Логируем и отправляем письмо с отказом
+        logger.info(f"Отправка письма с отказом на {self.email} при удалении")
+        send_mail(
+            "Отклонение запроса на права администратора",
+            f"Уважаемый(ая) пользователь,\n\n"
+            f"Сообщаем, что ваш запрос на получение прав администратора был отклонен. "
+            f"На данный момент мы не можем предоставить вам доступ к админ-панели.\n\n"
+            f"Для получения дополнительной информации вы можете обратиться в службу поддержки по адресу dylanbob0@yandex.ru\n\n"
+            f"С уважением,\n"
+            f'Команда "Библз"',
+            "dylanbob0@yandex.ru",
+            [self.email],
+            fail_silently=False,
+        )
+
+        # Удаляем запись Moderator
+        super().delete(*args, **kwargs)
+
+    def __str__(self):
+        return self.email
+
+
 class News(models.Model):
     title = models.CharField(max_length=255)
     subheader = models.CharField(max_length=500, blank=True, null=True)
     full_text = models.TextField()
     author = models.ForeignKey(User, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)  
+    updated_at = models.DateTimeField(auto_now=True)
     views_count = models.PositiveIntegerField(default=0)
-    likes = models.ManyToManyField(
-        User,
-        related_name='liked_news',
-        blank=True
-    )
-    comments = GenericRelation('Comment')
+    likes = models.ManyToManyField(User, related_name="liked_news", blank=True)
+    comments = GenericRelation("Comment")
 
     def __str__(self):
         return self.title
@@ -107,17 +261,19 @@ class News(models.Model):
     def likes_count(self):
         return self.likes.count()
 
+
 class NewsPhoto(models.Model):
     id = models.AutoField(primary_key=True)
     news = models.ForeignKey(News, on_delete=models.CASCADE, related_name="photos")
-    photo = models.ImageField(upload_to='news/', null=False, blank=False)
+    photo = models.ImageField(upload_to="news/", null=False, blank=False)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'news_photos'
+        db_table = "news_photos"
 
     def __str__(self):
         return f"Photo #{self.id} for News {self.news.id}"
+
 
 class Event(models.Model):
     id = models.AutoField(primary_key=True)
@@ -126,11 +282,11 @@ class Event(models.Model):
     description = models.TextField(null=True, blank=True)
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
-    organizer = models.ForeignKey('User', on_delete=models.CASCADE)
+    organizer = models.ForeignKey("User", on_delete=models.CASCADE)
     views_count = models.IntegerField(default=0)
-    created_at = models.DateTimeField(auto_now_add=True)  
-    updated_at = models.DateTimeField(auto_now=True)  
-    image = models.ImageField(upload_to='events/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    image = models.ImageField(upload_to="events/", null=True, blank=True)
     status = models.CharField(max_length=20, default="pending")
     address = models.CharField(max_length=255, null=True, blank=True)
     latitude = models.FloatField(null=True, blank=True)
@@ -138,21 +294,20 @@ class Event(models.Model):
     max_participants = models.PositiveIntegerField(
         default=0,
         verbose_name="Максимальное количество участников",
-        help_text="0 означает, что ограничений нет"
+        help_text="0 означает, что ограничений нет",
     )
-    participants_count = models.PositiveIntegerField(default=0)  
+    participants_count = models.PositiveIntegerField(default=0)
 
     # Постоянная связь с комментариями
-    comments = GenericRelation('Comment')
+    comments = GenericRelation("Comment")
 
     def __str__(self):
         return f"Event: {self.title}"
 
 
-
 class EventPhoto(models.Model):
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='photos')
-    photo = models.ImageField(upload_to='events/')
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="photos")
+    photo = models.ImageField(upload_to="events/")
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -161,17 +316,20 @@ class EventPhoto(models.Model):
 
 class EventRegistration(models.Model):
     id = models.AutoField(primary_key=True)
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='registrations')
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="registrations"
+    )
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    status = models.CharField(max_length=20, default='going')
+    status = models.CharField(max_length=20, default="going")
     registered_at = models.DateTimeField()
 
     class Meta:
-        db_table = 'event_registrations'
-        unique_together = ('event', 'user')  
+        db_table = "event_registrations"
+        unique_together = ("event", "user")
 
     def __str__(self):
         return f"Registration: {self.event.title} - {self.user.username}"
+
 
 class Place(models.Model):
     id = models.AutoField(primary_key=True)
@@ -181,25 +339,28 @@ class Place(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     views_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
-    added_by = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True)
+    added_by = models.ForeignKey(
+        "User", on_delete=models.SET_NULL, null=True, blank=True
+    )
     is_approved = models.BooleanField(default=False)
 
     class Meta:
-        db_table = 'places'
+        db_table = "places"
 
     def __str__(self):
         return f"Place: {self.name}"
 
+
 class PlaceRating(models.Model):
     id = models.AutoField(primary_key=True)
-    place = models.ForeignKey('Place', on_delete=models.CASCADE)
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    place = models.ForeignKey("Place", on_delete=models.CASCADE)
+    user = models.ForeignKey("User", on_delete=models.CASCADE)
     rating = models.IntegerField()
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = 'place_ratings'
+        db_table = "place_ratings"
 
     def __str__(self):
         return f"Rating {self.rating} for {self.place.name} by {self.user.username}"
@@ -207,115 +368,124 @@ class PlaceRating(models.Model):
 
 class Comment(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    user = models.ForeignKey("User", on_delete=models.CASCADE)
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, blank=True)
     object_id = models.PositiveIntegerField()
-    entity = GenericForeignKey('content_type', 'object_id')
+    entity = GenericForeignKey("content_type", "object_id")
     content = models.TextField(max_length=5000)  # Ограничение до 5000 символов
     parent_comment = models.ForeignKey(
-        'self',
-        null=True,
-        blank=True,
-        on_delete=models.CASCADE,
-        related_name='replies'
+        "self", null=True, blank=True, on_delete=models.CASCADE, related_name="replies"
     )
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     deleted_by = models.ForeignKey(
-        'User',
+        "User",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
-        related_name='deleted_comments'
+        related_name="deleted_comments",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)  # Добавляем
 
     class Meta:
-        db_table = 'comments'
+        db_table = "comments"
         indexes = [
-            models.Index(fields=['content_type', 'object_id']),
-            models.Index(fields=['parent_comment']),
-            models.Index(fields=['is_deleted']),
-            models.Index(fields=['created_at']),
+            models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["parent_comment"]),
+            models.Index(fields=["is_deleted"]),
+            models.Index(fields=["created_at"]),
         ]
 
     def __str__(self):
-        return f"Comment by {self.user.username} on {self.content_type} #{self.object_id}"
+        return (
+            f"Comment by {self.user.username} on {self.content_type} #{self.object_id}"
+        )
 
     @property
     def likes_count(self):
         return self.comment_likes.count()
 
+
 class Notification(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
+    user = models.ForeignKey("User", on_delete=models.CASCADE)
     type = models.CharField(max_length=50)
     message = models.TextField(null=True, blank=True)
     entity_type = models.CharField(max_length=20, null=True, blank=True)
     entity_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)  
+    updated_at = models.DateTimeField(auto_now=True)
     read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = 'notifications'
+        db_table = "notifications"
 
     def __str__(self):
         return f"Notif {self.type} to user {self.user_id}"
 
+
 class UserActivity(models.Model):
     id = models.AutoField(primary_key=True)
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
-    action = models.CharField(max_length=50)  
-    entity_type = models.CharField(max_length=20, null=True, blank=True)  
+    user = models.ForeignKey("User", on_delete=models.CASCADE)
+    action = models.CharField(max_length=50)
+    entity_type = models.CharField(max_length=20, null=True, blank=True)
     entity_id = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'user_activity'
+        db_table = "user_activity"
 
     def __str__(self):
         return f"Activity {self.action} by user {self.user_id}"
-    
+
+
 class NewsLike(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     news = models.ForeignKey(News, on_delete=models.CASCADE, related_name="news_likes")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'news')
+        unique_together = ("user", "news")
 
     def __str__(self):
         return f"Like by {self.user.username} on {self.news.title}"
-    
+
+
 class CommentLike(models.Model):
-    user = models.ForeignKey('User', on_delete=models.CASCADE)
-    comment = models.ForeignKey('Comment', on_delete=models.CASCADE, related_name='comment_likes')
+    user = models.ForeignKey("User", on_delete=models.CASCADE)
+    comment = models.ForeignKey(
+        "Comment", on_delete=models.CASCADE, related_name="comment_likes"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'comment_likes'  
-        unique_together = ('user', 'comment')
+        db_table = "comment_likes"
+        unique_together = ("user", "comment")
         indexes = [
-            models.Index(fields=['user', 'comment']),  
+            models.Index(fields=["user", "comment"]),
         ]
 
     def __str__(self):
         return f"Like by {self.user.username} on comment #{self.comment.id}"
 
+
 class EventView(models.Model):
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="viewed_users")
+    event = models.ForeignKey(
+        Event, on_delete=models.CASCADE, related_name="viewed_users"
+    )
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     viewed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('event', 'user')  # Только один просмотр от одного юзера
+        unique_together = ("event", "user")  # Только один просмотр от одного юзера
 
     def __str__(self):
         return f"{self.user.username} viewed {self.event.title}"
 
+
 User = get_user_model()
+
 
 class FCMToken(models.Model):
     token = models.CharField(max_length=255, unique=True)
@@ -328,10 +498,14 @@ class FCMToken(models.Model):
 
 
 class PushNotificationSetting(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='push_settings')
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="push_settings"
+    )
     events = models.BooleanField(default=True)  # Уведомления о событиях
     moderation = models.BooleanField(default=True)  # Уведомления о модерации
-    likes_comments = models.BooleanField(default=True)  # Уведомления о лайках и комментариях
+    likes_comments = models.BooleanField(
+        default=True
+    )  # Уведомления о лайках и комментариях
 
     def __str__(self):
         return f"Settings for {self.user.username}"
