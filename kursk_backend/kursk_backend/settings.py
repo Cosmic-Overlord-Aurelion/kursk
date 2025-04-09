@@ -116,7 +116,7 @@ TEMPLATES = [
 ]
 
 # WSGI-приложение
-WSGI_APPLICATION = "kursk_backend.wsgi.application"
+WSGI_APPLICATION = "kursk_backend.kursk_backend.wsgi.application"
 
 # Настройки базы данных (SQLite с Volume)
 DATABASES = {
