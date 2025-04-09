@@ -10,16 +10,16 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.core.mail import send_mail
 import random
+
 import string
 import logging
 
-# Настройка логирования
 logger = logging.getLogger(__name__)
 
 
 # Функция для генерации случайного пароля из 6 цифр
 def generate_random_password(length=6):
-    """Генерирует случайный пароль из 6 цифр."""
+    """Генерирует случайный пароль из 6 цифр"""
     characters = string.digits  # Только цифры: 0123456789
     return "".join(random.choice(characters) for _ in range(length))
 
@@ -27,7 +27,7 @@ def generate_random_password(length=6):
 class UserManager(BaseUserManager):
     def create_user(self, email, username, password=None):
         if not email:
-            raise ValueError("У пользователя должен быть email")
+            raise ValueError("У пользователя должен быть email.")
         user = self.model(email=self.normalize_email(email), username=username)
         if password:
             user.set_password(password)
