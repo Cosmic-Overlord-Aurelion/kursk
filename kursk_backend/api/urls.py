@@ -12,7 +12,7 @@ from .views import (
     add_like, add_view, delete_comment, update_comment, toggle_comment_like,
     get_latest_comment, event_detail, add_event_photos, delete_event, update_event_preview, 
     my_events, delete_notification, register_fcm_token, update_push_settings, get_push_settings,
-    list_user_friendships
+    list_user_friendships, mark_message_read, list_conversations
 )
 
 urlpatterns = [
@@ -64,8 +64,14 @@ urlpatterns = [
     path('comments/<int:comment_id>/delete/', delete_comment, name='delete_comment'),
     path('comments/<int:comment_id>/update/', update_comment, name='update_comment'),
     path('comments/<int:comment_id>/like_toggle/', toggle_comment_like, name='toggle_comment_like'),
-    path('comments/latest/<int:entity_id>/', get_latest_comment, name='get_latest_comment'),  # Обновлено зд
-    
+    path('comments/latest/<int:entity_id>/', get_latest_comment, name='get_latest_comment'),
+
+    # Сообщения
+    path('messages/send/', send_message, name='send_message'),
+    path('messages/between/<int:user1>/<int:user2>/', get_messages_between, name='get_messages_between'),
+    path('messages/<int:message_id>/read/', mark_message_read, name='mark_message_read'),
+    path('messages/conversations/', list_conversations, name='list_conversations'),
+
     # Уведомления
     path('notifications/', list_notifications, name='list_notifications'),
     path('notifications/mark_read/', mark_notification_read, name='mark_notification_read'),

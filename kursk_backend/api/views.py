@@ -6,6 +6,7 @@ from django.core.mail import send_mail
 import random
 import threading
 from django.core.cache import cache
+from rest_framework.pagination import PageNumberPagination
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -64,7 +65,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-
+from api.tasks import notify_message_receiver
 from .models import (
     User, Friendship, Message, News, NewsPhoto, NewsLike,
     Event, EventRegistration, Place, PlaceRating, Comment,
@@ -578,31 +579,60 @@ def list_messages(request):
     ser = MessageSerializer(qs, many=True)
     return Response(ser.data, status=200)
 
+logger = logging.getLogger(__name__)
+
 @api_view(['POST'])
-@permission_classes([IsAuthenticated]) 
+@permission_classes([IsAuthenticated])
 def send_message(request):
-    sender = request.user 
-    receiver_id = request.data.get('receiver_id')
+    logger.debug(f"Request data: {request.data}")
+
+    to_user_id = request.data.get('to_user_id')
     content = request.data.get('content')
 
-    if not receiver_id or not content:
-        return Response({'error': 'Не все поля заполнены'}, status=400)
+    if not to_user_id:
+        return Response({'error': 'Не указан получатель (to_user_id)'}, status=status.HTTP_400_BAD_REQUEST)
+    if not content:
+        return Response({'error': 'Не указан текст сообщения (content)'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        receiver = User.objects.get(id=receiver_id)
-        message = Message.objects.create(sender=sender, receiver=receiver, content=content)
-        return Response({'message': 'Сообщение отправлено', 'message_id': message.id}, status=201)
+        to_user = User.objects.get(id=to_user_id)
     except User.DoesNotExist:
-        return Response({'error': 'Получатель не найден'}, status=404)
+        return Response({'error': 'Получатель не найден'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = MessageSerializer(data={
+        'from_user': request.user.id,
+        'to_user': to_user.id,
+        'content': content,
+        'sent_at': timezone.now()
+    })
+
+    if serializer.is_valid():
+        message = serializer.save(from_user=request.user, to_user=to_user)
+        # Запускаем задачу Celery для уведомления
+        notify_message_receiver.delay(message.id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class MessagePagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_messages_between(request, user1, user2):
+    if request.user.id not in [int(user1), int(user2)]:
+        return Response({'error': 'Доступ запрещен'}, status=403)
+
     qs = Message.objects.filter(
         Q(from_user_id=user1, to_user_id=user2) |
         Q(from_user_id=user2, to_user_id=user1)
-    ).order_by('sent_at')
-    ser = MessageSerializer(qs, many=True)
-    return Response(ser.data, status=200)
+    ).select_related('from_user', 'to_user').order_by('-sent_at')
+
+    paginator = MessagePagination()
+    page = paginator.paginate_queryset(qs, request)
+    serializer = MessageSerializer(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
 
 import logging
 from django.utils import timezone
@@ -1542,3 +1572,57 @@ def list_user_friendships(request):
     # Сериализация и ответ
     serializer = FriendshipSerializer(qs, many=True)
     return Response(serializer.data, status=200)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_message_read(request, message_id):
+    try:
+        message = Message.objects.get(id=message_id, to_user=request.user)
+        if not message.read_at:
+            message.read_at = timezone.now()
+            message.save(update_fields=['read_at'])
+        return Response(MessageSerializer(message).data, status=200)
+    except Message.DoesNotExist:
+        return Response({'error': 'Сообщение не найдено или не ваше'}, status=404)
+from django.db.models import Max
+from .serializers import ConversationSerializer
+from django.db.models import Q, Subquery, OuterRef, Count
+logger = logging.getLogger(__name__)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_conversations(request):
+    user = request.user
+
+    # Получаем всех собеседников (исключая дубликаты)
+    messages = Message.objects.filter(Q(from_user=user) | Q(to_user=user)) \
+        .values('from_user', 'to_user') \
+        .distinct()
+
+    # Создаём уникальные пары ID, упорядоченные
+    pairs = set()
+    for msg in messages:
+        user1 = msg['from_user']
+        user2 = msg['to_user']
+        if user1 != user2:
+            pair = tuple(sorted([user1, user2]))
+            pairs.add(pair)
+
+    conversations = []
+    for user1_id, user2_id in pairs:
+        other_id = user2_id if user1_id == user.id else user1_id
+        try:
+            other_user = User.objects.get(id=other_id)
+            last_msg = Message.objects.filter(
+                Q(from_user=user, to_user=other_user) |
+                Q(from_user=other_user, to_user=user)
+            ).order_by('-sent_at').first()
+            conversations.append({
+                "user": UserSerializer(other_user).data,
+                "last_message": MessageSerializer(last_msg).data if last_msg else None,
+                "unread_count": Message.objects.filter(from_user=other_user, to_user=user, read_at__isnull=True).count()
+            })
+        except User.DoesNotExist:
+            continue
+
+    return Response(conversations)
